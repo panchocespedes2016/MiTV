@@ -1,0 +1,12 @@
+# Datos de uso (no se suben)
+playlists.json
+content-cache.json
+epg-cache.xml
+imgcache/
+mitv-*.json
+watch-history.json
+subs-style.json
+recordings/
+# Build
+bin/
+obj/
