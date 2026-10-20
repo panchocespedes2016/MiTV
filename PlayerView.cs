@@ -1293,7 +1293,7 @@ namespace MiTV
         void RestoreChrome()
         {
             var w = Nav.Main;
-            w.WindowStyle = WindowStyle.SingleBorderWindow;
+            w.WindowStyle = WindowStyle.None;
             w.WindowState = prevMaximized ? WindowState.Maximized : WindowState.Normal;
         }
 

@@ -22,7 +22,7 @@ namespace MiTV
     public static class ImgCache
     {
         static string Dir => Path.Combine(AppContext.BaseDirectory, "imgcache");
-        const long MaxBytes = 2L * 1024 * 1024 * 1024; // 2 GB, se expulsan las más viejas
+        const long MaxBytes = 10L * 1024 * 1024 * 1024; // 10 GB, se expulsan las más viejas
 
         static readonly HttpClient http = new HttpClient(new SocketsHttpHandler
         {

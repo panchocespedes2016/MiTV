@@ -79,9 +79,11 @@ namespace MiTV
             {
                 string id = JStr(el, "stream_id");
                 if (string.IsNullOrEmpty(id)) continue;
+                string chName = JStr(el, "name");
+                if (IsJunkChannel(chName)) continue;
                 channels.Add(new LiveChannel
                 {
-                    Name = JStr(el, "name"),
+                    Name = chName,
                     Logo = JStr(el, "stream_icon"),
                     Group = CatName(liveCats, JStr(el, "category_id")),
                     TvgId = JStr(el, "epg_channel_id"),
@@ -196,6 +198,13 @@ namespace MiTV
             if (!el.TryGetProperty(name, out var v)) return 0;
             string s = v.ValueKind == JsonValueKind.Number ? v.GetRawText() : v.GetString() ?? "";
             return long.TryParse(s, out var n) ? n : 0;
+        }
+
+        // Canales basura del proveedor (ej: "##### PRIME #####"): se descartan
+        // durante la sincronización y no se cuentan en ningún lugar.
+        static bool IsJunkChannel(string name)
+        {
+            return !string.IsNullOrEmpty(name) && name.Contains("###");
         }
 
         // ---------- Episodios de serie (Xtream) ----------
@@ -367,7 +376,7 @@ namespace MiTV
                              url.EndsWith(".mp4", StringComparison.OrdinalIgnoreCase) ||
                              url.EndsWith(".mkv", StringComparison.OrdinalIgnoreCase))
                         movies.Add(new VodMovie { Name = name, Logo = logo ?? "", StreamUrl = url, Category = group ?? "" });
-                    else
+                    else if (!IsJunkChannel(name))
                         channels.Add(new LiveChannel { Name = name, Logo = logo ?? "", StreamUrl = url, Group = group ?? "", TvgId = tvgId ?? "" });
                     name = null; logo = null; group = null; tvgId = null;
                 }

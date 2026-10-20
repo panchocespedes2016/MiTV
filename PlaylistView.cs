@@ -99,8 +99,17 @@ namespace MiTV
             var addBtn = Ui.ActionButton(Lang.T("+ Agregar lista"), () =>
                 Nav.Push(new PlaylistEditView(null, Refresh)));
             addBtn.Margin = new Thickness(0, 0, 12, 14);
-            var syncBtn = Ui.ActionButton(Lang.T("⟳ Sincronizar"), () =>
-                PlaylistLoader.RefreshInBackground(quiet: false));
+            System.Windows.Controls.Button syncBtn = null;
+            syncBtn = Ui.ActionButton(Lang.T("⟳ Sincronizar"), () =>
+            {
+                // Feedback visual: cambia a verde 2 segundos para confirmar que se activó
+                var origBg = syncBtn.Background;
+                syncBtn.Background = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(0x2E, 0x7D, 0x32));
+                var fbTimer = new System.Windows.Threading.DispatcherTimer { Interval = TimeSpan.FromSeconds(2) };
+                fbTimer.Tick += (ts, te) => { fbTimer.Stop(); syncBtn.Background = origBg; };
+                fbTimer.Start();
+                PlaylistLoader.RefreshInBackground(quiet: false);
+            });
             syncBtn.Margin = new Thickness(0, 0, 0, 14);
             topRow.Children.Add(addBtn);
             topRow.Children.Add(syncBtn);
