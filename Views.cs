@@ -1286,7 +1286,7 @@ namespace MiTV
                     dock.Children.Add(thumbBox);
                 }
                 var txts = new StackPanel { VerticalAlignment = VerticalAlignment.Center };
-                txts.Children.Add(new TextBlock { Text = title, FontSize = 15, Foreground = Ui.Text, TextTrimming = TextTrimming.CharacterEllipsis });
+                txts.Children.Add(Ui.MarqueeWrap(new TextBlock { Text = title, FontSize = 15, Foreground = Ui.Text, ToolTip = title }));
                 string sub2 = sub;
                 if (!string.IsNullOrEmpty(ep.Duration)) sub2 += (sub2 == "" ? "" : "  \u00B7 ") + ep.Duration;
                 txts.Children.Add(new TextBlock { Text = sub2, FontSize = 12, Foreground = Ui.Gray });
@@ -1404,14 +1404,22 @@ namespace MiTV
                     CornerRadius = new CornerRadius(8), Padding = new Thickness(10, 8, 10, 8),
                     Margin = new Thickness(0, 0, 0, 8), Cursor = System.Windows.Input.Cursors.Hand
                 };
-                var sp = new StackPanel { Orientation = Orientation.Horizontal };
-                sp.Children.Add(new TextBlock { Text = n.ToString(), FontSize = 13, Foreground = Ui.Gray, Width = 24, VerticalAlignment = VerticalAlignment.Center });
+                var sp = new Grid();
+                sp.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+                sp.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+                sp.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+                var numTb = new TextBlock { Text = n.ToString(), FontSize = 13, Foreground = Ui.Gray, Width = 24, VerticalAlignment = VerticalAlignment.Center };
+                Grid.SetColumn(numTb, 0);
+                sp.Children.Add(numTb);
                 var logoBox = new Border { Width = 40, Height = 26, CornerRadius = new CornerRadius(4), Background = Brushes.Black, BorderBrush = Brushes.White, BorderThickness = new Thickness(1), Margin = new Thickness(0, 0, 8, 0), VerticalAlignment = VerticalAlignment.Center };
                 var ph = new TextBlock { Text = "\U0001F4FA", FontSize = 12, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center };
                 logoBox.Child = ph;
                 if (!string.IsNullOrEmpty(cc.Logo)) ImgCache.Load(logoBox, ph, cc.Logo, 80);
+                Grid.SetColumn(logoBox, 1);
                 sp.Children.Add(logoBox);
-                sp.Children.Add(new TextBlock { Text = cc.Name, FontSize = 14, Foreground = Ui.Text, VerticalAlignment = VerticalAlignment.Center, TextTrimming = TextTrimming.CharacterEllipsis });
+                var ccNameHost = Ui.MarqueeWrap(new TextBlock { Text = cc.Name, FontSize = 14, Foreground = Ui.Text, VerticalAlignment = VerticalAlignment.Center, ToolTip = cc.Name });
+                Grid.SetColumn(ccNameHost, 2);
+                sp.Children.Add(ccNameHost);
                 b.Child = sp;
                 b.MouseLeftButtonUp += (s, e) => SelectChannel(cc);
                 catsPanel.Children.Add(b);
@@ -1448,7 +1456,7 @@ namespace MiTV
                     Margin = new Thickness(0, 0, 0, 10), Cursor = System.Windows.Input.Cursors.Hand
                 };
                 var sp = new StackPanel();
-                sp.Children.Add(new TextBlock { Text = pp.Title, FontSize = 15, FontWeight = FontWeights.Bold, Foreground = Ui.Text, TextTrimming = TextTrimming.CharacterEllipsis });
+                sp.Children.Add(Ui.MarqueeWrap(new TextBlock { Text = pp.Title, FontSize = 15, FontWeight = FontWeights.Bold, Foreground = Ui.Text, ToolTip = pp.Title }));
                 string dt = pp.StartUtc.ToLocalTime().ToString("dd/MM HH:mm") + " - " + pp.StopUtc.ToLocalTime().ToString("HH:mm");
                 if (!string.IsNullOrEmpty(pp.Category)) dt += "  \u00B7 " + pp.Category;
                 sp.Children.Add(new TextBlock { Text = dt, FontSize = 12, Foreground = Ui.Gray, Margin = new Thickness(0, 4, 0, 0) });

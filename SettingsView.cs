@@ -506,6 +506,19 @@ namespace MiTV
         {
             return new SettingSubView(Lang.T("Ajustes avanzados"), sp =>
             {
+                var sizeOpts = new[] { 1, 2, 5, 10, 0 };
+                var sizeLbl = new[] { "1 GB", "2 GB", "5 GB", "10 GB", Lang.T("Sin límite") };
+                int sizeIdx = Array.IndexOf(sizeOpts, ImgCache.LimitGB);
+                if (sizeIdx < 0) sizeIdx = 3;
+                long used = ImgCache.CurrentSize();
+                sp.Children.Add(Ui.SettingRow(Lang.T("Tamaño de caché de imágenes"),
+                    Lang.T("Uso actual") + ": " + ImgCache.FormatSize(used), sizeLbl[sizeIdx], () =>
+                    Nav.Push(new PickerView(Lang.T("Tamaño de caché de imágenes"), sizeLbl, sizeLbl[sizeIdx], v =>
+                    {
+                        int idx = Array.IndexOf(sizeLbl, v);
+                        ImgCache.LimitGB = sizeOpts[idx];
+                        Nav.PickDone();
+                    }))));
                 sp.Children.Add(Ui.SettingRow(Lang.T("Borrar caché"), Lang.T("Libera espacio de temporales"), null, () =>
                     Ui.Confirm(Lang.T("Borrar caché"),
                         Lang.T("¿Borrar la caché de imágenes? Se volverán a descargar cuando las necesites."),

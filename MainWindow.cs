@@ -92,9 +92,47 @@ namespace MiTV
                 int dark = 1;
                 if (DwmSetWindowAttribute(hwnd, 20, ref dark, sizeof(int)) != 0)
                     DwmSetWindowAttribute(hwnd, 19, ref dark, sizeof(int));
+                HwndSource.FromHwnd(hwnd)?.AddHook(WndProcWorkArea);
             }
             catch { }
         }
+
+        // Al maximizar, limitar la ventana al área de trabajo del monitor: con el
+        // marco propio de la app, Windows maximiza a pantalla completa y tapa la
+        // barra de tareas; WM_GETMINMAXINFO permite corregir tamaño y posición.
+        private static IntPtr WndProcWorkArea(IntPtr hwnd, int msg, IntPtr wParam, IntPtr lParam, ref bool handled)
+        {
+            const int WM_GETMINMAXINFO = 0x0024;
+            if (msg == WM_GETMINMAXINFO)
+            {
+                try
+                {
+                    var mmi = Marshal.PtrToStructure<MINMAXINFO>(lParam);
+                    IntPtr mon = MonitorFromWindow(hwnd, 2); // MONITOR_DEFAULTTONEAREST
+                    if (mon != IntPtr.Zero)
+                    {
+                        var mi = new MONITORINFO { cbSize = Marshal.SizeOf<MONITORINFO>() };
+                        if (GetMonitorInfo(mon, ref mi))
+                        {
+                            mmi.ptMaxPosition.x = mi.rcWork.left - mi.rcMonitor.left;
+                            mmi.ptMaxPosition.y = mi.rcWork.top - mi.rcMonitor.top;
+                            mmi.ptMaxSize.x = mi.rcWork.right - mi.rcWork.left;
+                            mmi.ptMaxSize.y = mi.rcWork.bottom - mi.rcWork.top;
+                            Marshal.StructureToPtr(mmi, lParam, true);
+                        }
+                    }
+                }
+                catch { }
+            }
+            return IntPtr.Zero;
+        }
+
+        [StructLayout(LayoutKind.Sequential)] private struct POINTL { public int x, y; }
+        [StructLayout(LayoutKind.Sequential)] private struct MINMAXINFO { public POINTL ptReserved, ptMaxSize, ptMaxPosition, ptMinTrackSize, ptMaxTrackSize; }
+        [StructLayout(LayoutKind.Sequential)] private struct RECTL { public int left, top, right, bottom; }
+        [StructLayout(LayoutKind.Sequential)] private struct MONITORINFO { public int cbSize; public RECTL rcMonitor, rcWork; public int dwFlags; }
+        [DllImport("user32.dll")] private static extern IntPtr MonitorFromWindow(IntPtr hwnd, int dwFlags);
+        [DllImport("user32.dll")] private static extern bool GetMonitorInfo(IntPtr hMonitor, ref MONITORINFO lpmi);
         public ContentControl MainContent;
         private Border pill, tabBar;
         private UniformGrid tabsGrid;

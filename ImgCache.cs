@@ -7,6 +7,7 @@ using System.Net.Http;
 using System.Net.Http.Headers;
 using System.Security.Cryptography;
 using System.Text;
+using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Windows;
@@ -22,7 +23,38 @@ namespace MiTV
     public static class ImgCache
     {
         static string Dir => Path.Combine(AppContext.BaseDirectory, "imgcache");
-        const long MaxBytes = 10L * 1024 * 1024 * 1024; // 10 GB, se expulsan las más viejas
+
+        // Tamaño máximo configurable (mitv-imgcache.json): GB, 0 = sin límite.
+        // Al llenarse se expulsan las imágenes más viejas.
+        static string SettingsFile => Path.Combine(AppContext.BaseDirectory, "mitv-imgcache.json");
+        class CacheData { public int LimitGB { get; set; } = 10; }
+        static readonly CacheData cacheData = LoadCacheData();
+
+        static CacheData LoadCacheData()
+        {
+            try
+            {
+                if (File.Exists(SettingsFile))
+                {
+                    var x = JsonSerializer.Deserialize<CacheData>(File.ReadAllText(SettingsFile));
+                    if (x != null) return x;
+                }
+            }
+            catch { }
+            return new CacheData();
+        }
+
+        public static int LimitGB
+        {
+            get => cacheData.LimitGB;
+            set
+            {
+                cacheData.LimitGB = value;
+                try { File.WriteAllText(SettingsFile, JsonSerializer.Serialize(cacheData)); } catch { }
+            }
+        }
+
+        static long MaxBytes => cacheData.LimitGB <= 0 ? long.MaxValue : (long)cacheData.LimitGB * 1024L * 1024 * 1024;
 
         static readonly HttpClient http = new HttpClient(new SocketsHttpHandler
         {
@@ -33,6 +65,18 @@ namespace MiTV
         // Límite de operaciones simultáneas (descarga + decodificado):
         // sin esto, miles de imágenes a la vez saturan red e hilo de UI
         static readonly SemaphoreSlim slots = new SemaphoreSlim(16);
+
+        // Tamaño actual de la caché en disco
+        public static long CurrentSize()
+        {
+            try
+            {
+                var d = new DirectoryInfo(Dir);
+                if (!d.Exists) return 0;
+                return d.GetFiles("*", SearchOption.AllDirectories).Sum(f => f.Length);
+            }
+            catch { return 0; }
+        }
 
         // Borra toda la caché de imágenes. Devuelve los bytes liberados.
         public static long Clear()

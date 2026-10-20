@@ -4,6 +4,7 @@ using System.Windows.Controls;
 using System.Windows.Documents;
 using System.Windows.Input;
 using System.Windows.Media;
+using System.Windows.Media.Animation;
 using System.Windows.Media.Imaging;
 using System.Windows.Shapes;
 
@@ -267,10 +268,13 @@ namespace MiTV
             sp.Children.Add(thumb);
             if (!string.IsNullOrEmpty(imageUrl))
                 ImgCache.Load(thumb, emojiTb, imageUrl, 380);
-            var tt = new TextBlock { FontWeight = FontWeights.Bold, FontSize = 14, Foreground = Text, TextTrimming = TextTrimming.CharacterEllipsis };
+            var tt = new TextBlock { FontWeight = FontWeights.Bold, FontSize = 14, Foreground = Text, ToolTip = title };
             if (!string.IsNullOrEmpty(title)) tt.Text = title;
-            sp.Children.Add(tt);
-            sp.Children.Add(new TextBlock { Text = sub ?? "", FontSize = 12, Foreground = Gray, Margin = new Thickness(0, 4, 0, 0), TextTrimming = TextTrimming.CharacterEllipsis });
+            sp.Children.Add(MarqueeWrap(tt));
+            var st = new TextBlock { Text = sub ?? "", FontSize = 12, Foreground = Gray, ToolTip = sub };
+            var stHost = MarqueeWrap(st);
+            stHost.Margin = new Thickness(0, 4, 0, 0);
+            sp.Children.Add(stHost);
             if (progress >= 0) sp.Children.Add(Progress(progress, new Thickness(0, 10, 0, 0)));
             b.Child = sp;
             b.MouseLeftButtonUp += (s, e) => onClick?.Invoke();
@@ -382,12 +386,24 @@ namespace MiTV
             right.Children.Add(new TextBlock { Text = c.Progress + "%", FontSize = 12, Foreground = Gray, VerticalAlignment = VerticalAlignment.Center });
             dock.Children.Add(right);
             var tx = new StackPanel { VerticalAlignment = VerticalAlignment.Center };
-            var nameRow = new StackPanel { Orientation = Orientation.Horizontal };
-            nameRow.Children.Add(new TextBlock { Text = c.Name, FontWeight = FontWeights.Bold, FontSize = 15, Foreground = Text });
+            var nameGrid = new Grid();
+            nameGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            nameGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+            var nameTb2 = new TextBlock { Text = c.Name, FontWeight = FontWeights.Bold, FontSize = 15, Foreground = Text, ToolTip = c.Name };
+            var nameHost = MarqueeWrap(nameTb2);
+            Grid.SetColumn(nameHost, 0);
+            nameGrid.Children.Add(nameHost);
             if (c.Tag == "catchup")
-                nameRow.Children.Add(new Border { Background = B("#1d4a2a"), CornerRadius = new CornerRadius(4), Padding = new Thickness(6, 2, 6, 2), Margin = new Thickness(8, 0, 0, 0), VerticalAlignment = VerticalAlignment.Center, Child = new TextBlock { Text = "\u21BA", FontSize = 11, Foreground = B("#3ddc84"), ToolTip = Lang.T("Con repetición") } });
-            tx.Children.Add(nameRow);
-            tx.Children.Add(new TextBlock { Text = c.Programme, FontSize = 12, Foreground = Gray, Margin = new Thickness(0, 2, 0, 0), TextTrimming = TextTrimming.CharacterEllipsis });
+            {
+                var cbadge = new Border { Background = B("#1d4a2a"), CornerRadius = new CornerRadius(4), Padding = new Thickness(6, 2, 6, 2), Margin = new Thickness(8, 0, 0, 0), VerticalAlignment = VerticalAlignment.Center, Child = new TextBlock { Text = "\u21BA", FontSize = 11, Foreground = B("#3ddc84"), ToolTip = Lang.T("Con repetición") } };
+                Grid.SetColumn(cbadge, 1);
+                nameGrid.Children.Add(cbadge);
+            }
+            tx.Children.Add(nameGrid);
+            var progTb = new TextBlock { Text = c.Programme, FontSize = 12, Foreground = Gray, ToolTip = c.Programme };
+            var progHost = MarqueeWrap(progTb);
+            progHost.Margin = new Thickness(0, 2, 0, 0);
+            tx.Children.Add(progHost);
             dock.Children.Add(tx);
             b.Child = dock;
             b.MouseLeftButtonUp += (s, e) => onClick?.Invoke();
@@ -445,6 +461,70 @@ namespace MiTV
         }
 
         // Botón de categoría para la barra lateral (ancho completo, nombre a la izquierda y conteo a la derecha)
+        // Marquesina suave (ping-pong) para un texto que no cabe en su contenedor:
+        // se desplaza de un lado al otro solo si el texto es más ancho que el hueco.
+        // Se recalcula cuando el contenedor cambia de tamaño (la medida al cargar
+        // puede no ser la definitiva y dejar el final del texto sin mostrar).
+        // Envuelve un TextBlock en un contenedor con recorte y le aplica la marquesina.
+        // El texto va dentro de un Canvas: así el layout nunca lo recorta a un ancho
+        // menor y siempre se dibuja la línea completa (solo lo recorta el Border).
+        // Devuelve el contenedor para agregarlo al layout en lugar del TextBlock.
+        public static Border MarqueeWrap(TextBlock tb)
+        {
+            var canvas = new Canvas();
+            canvas.Children.Add(tb);
+            var host = new Border { ClipToBounds = true, VerticalAlignment = tb.VerticalAlignment, Child = canvas };
+            ApplyMarquee(tb, host);
+            return host;
+        }
+
+        public static void ApplyMarquee(TextBlock tb, FrameworkElement clipHost)
+        {
+            TranslateTransform tr = null;
+            double lastAvail = -1;
+            Action setup = () =>
+            {
+                try
+                {
+                    double avail = clipHost.ActualWidth;
+                    if (avail <= 0 || Math.Abs(avail - lastAvail) < 1) return;
+                    lastAvail = avail;
+                    // El texto vive en un Canvas: su DesiredSize es el ancho real de la
+                    // línea completa con el motor de texto verdadero.
+                    tb.Measure(new Size(double.PositiveInfinity, double.PositiveInfinity));
+                    double fullW = tb.DesiredSize.Width;
+                    // El Canvas por sí solo reporta tamaño 0: hay que darle el tamaño
+                    // real del texto o el contenedor colapsa y no se ve nada.
+                    if (clipHost is Border bd && bd.Child is Canvas cv)
+                    {
+                        cv.Width = fullW;
+                        cv.Height = tb.DesiredSize.Height;
+                    }
+                    double over = fullW - avail;
+                    if (tr == null) { tr = new TranslateTransform(); tb.RenderTransform = tr; }
+                    tr.BeginAnimation(TranslateTransform.XProperty, null);
+                    tr.X = 0;
+                    if (over > 6)
+                    {
+                        tb.HorizontalAlignment = HorizontalAlignment.Left;
+                        double move = Math.Min(20, Math.Max(6, over / 11.0)); // duración del desplazamiento
+                        double holdStart = 5.0, holdEnd = 3.0; // pausa de 5 s al inicio y de 3 s al final
+                        var ease = new SineEase { EasingMode = EasingMode.EaseInOut };
+                        var kf = new DoubleAnimationUsingKeyFrames { RepeatBehavior = RepeatBehavior.Forever };
+                        kf.KeyFrames.Add(new LinearDoubleKeyFrame(0, KeyTime.FromTimeSpan(TimeSpan.FromSeconds(0))));
+                        kf.KeyFrames.Add(new LinearDoubleKeyFrame(0, KeyTime.FromTimeSpan(TimeSpan.FromSeconds(holdStart))));
+                        kf.KeyFrames.Add(new EasingDoubleKeyFrame(-(over + 6), KeyTime.FromTimeSpan(TimeSpan.FromSeconds(holdStart + move)), ease));
+                        kf.KeyFrames.Add(new LinearDoubleKeyFrame(-(over + 6), KeyTime.FromTimeSpan(TimeSpan.FromSeconds(holdStart + move + holdEnd))));
+                        kf.KeyFrames.Add(new EasingDoubleKeyFrame(0, KeyTime.FromTimeSpan(TimeSpan.FromSeconds(holdStart + 2 * move + holdEnd)), ease));
+                        tr.BeginAnimation(TranslateTransform.XProperty, kf);
+                    }
+                }
+                catch { }
+            };
+            clipHost.Loaded += (s, e) => clipHost.Dispatcher.BeginInvoke(System.Windows.Threading.DispatcherPriority.Loaded, setup);
+            clipHost.SizeChanged += (s, e) => setup();
+        }
+
         public static Button CatButton(string text, int count, bool selected, Action onClick)
         {
             var nameColor = selected ? Brushes.White : Text;
@@ -452,9 +532,11 @@ namespace MiTV
             var g = new Grid();
             g.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
             g.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-            var nameTb = new TextBlock { Text = text, TextTrimming = TextTrimming.CharacterEllipsis, Foreground = nameColor, VerticalAlignment = VerticalAlignment.Center };
-            Grid.SetColumn(nameTb, 0);
-            g.Children.Add(nameTb);
+            var nameTb = new TextBlock { Text = text, Foreground = nameColor, VerticalAlignment = VerticalAlignment.Center };
+            var nameClip = MarqueeWrap(nameTb);
+            nameClip.ToolTip = text;
+            Grid.SetColumn(nameClip, 0);
+            g.Children.Add(nameClip);
             var countTb = new TextBlock { Text = count.ToString(), Foreground = countColor, FontSize = 12, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(8, 0, 0, 0) };
             Grid.SetColumn(countTb, 1);
             g.Children.Add(countTb);

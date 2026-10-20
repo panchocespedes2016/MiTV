@@ -617,7 +617,7 @@ namespace MiTV
                 Height = RowH - 12
             };
             var sp = new StackPanel();
-            sp.Children.Add(new TextBlock { Text = p.Title, FontSize = 13, Foreground = Brushes.White, TextTrimming = TextTrimming.CharacterEllipsis });
+            sp.Children.Add(Ui.MarqueeWrap(new TextBlock { Text = p.Title, FontSize = 13, Foreground = Brushes.White, ToolTip = p.Title }));
             if (w > 120)
             {
                 string det = ShortWords(p.Desc, 6);
@@ -758,39 +758,15 @@ namespace MiTV
             catch { }
         }
 
-        // Nombre con marquesina suave (ping-pong) solo si no cabe
+        // Nombre con marquesina suave: usa el patrón común de Ui (pausa 5 s al
+        // inicio, desplazamiento, pausa 3 s al final y regreso)
         static Border MarqueeName(string text, double width)
         {
-            var clip = new Border { Width = width, ClipToBounds = true, VerticalAlignment = VerticalAlignment.Center };
-            var tb = new TextBlock { Text = text, FontWeight = FontWeights.Bold, FontSize = 14, Foreground = Ui.Text };
-            clip.Child = tb;
-            clip.Loaded += (s, e) =>
-            {
-                try
-                {
-                    tb.Measure(new Size(double.PositiveInfinity, double.PositiveInfinity));
-                    double fullW = tb.DesiredSize.Width;
-                    double over = fullW - width;
-                    if (over > 6)
-                    {
-                        tb.Width = fullW; // layout completo para que el desplazamiento revele el texto
-                        var tr = new TranslateTransform();
-                        tb.RenderTransform = tr;
-                        tr.BeginAnimation(TranslateTransform.XProperty, new DoubleAnimation
-                        {
-                            From = 0,
-                            To = -over,
-                            Duration = TimeSpan.FromSeconds(6.5),
-                            BeginTime = TimeSpan.FromSeconds(1),
-                            AutoReverse = true,
-                            RepeatBehavior = RepeatBehavior.Forever,
-                            EasingFunction = new SineEase { EasingMode = EasingMode.EaseInOut }
-                        });
-                    }
-                }
-                catch { }
-            };
-            return clip;
+            var tb = new TextBlock { Text = text, FontWeight = FontWeights.Bold, FontSize = 14, Foreground = Ui.Text, ToolTip = text };
+            var host = Ui.MarqueeWrap(tb);
+            host.Width = width;
+            host.VerticalAlignment = VerticalAlignment.Center;
+            return host;
         }
     }
 }
