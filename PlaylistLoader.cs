@@ -313,32 +313,66 @@ namespace MiTV
                 $"{srv}/player_api.php?username={u}&password={p}&action=get_series_info&series_id={Uri.EscapeDataString(seriesId)}");
             using var doc = JsonDocument.Parse(json);
             if (!doc.RootElement.TryGetProperty("episodes", out var episodes)) return eps;
-            foreach (var season in episodes.EnumerateObject())
+            void AddEp(JsonElement el, string seasonFallback)
             {
-                foreach (var el in season.Value.EnumerateArray())
+                string id = JStr(el, "id");
+                if (string.IsNullOrEmpty(id)) return;
+                string ext = JStr(el, "container_extension");
+                if (string.IsNullOrEmpty(ext)) ext = "mp4";
+                string season = !string.IsNullOrEmpty(seasonFallback) ? seasonFallback : JStr(el, "season");
+                if (string.IsNullOrEmpty(season)) season = "1";
+                var epi = new EpisodeInfo
                 {
-                    string id = JStr(el, "id");
-                    if (string.IsNullOrEmpty(id)) continue;
-                    string ext = JStr(el, "container_extension");
-                    if (string.IsNullOrEmpty(ext)) ext = "mp4";
-                    var epi = new EpisodeInfo
+                    Season = season,
+                    Num = JStr(el, "episode_num"),
+                    Title = JStr(el, "title"),
+                    Url = $"{srv}/series/{u}/{p}/{id}.{ext}"
+                };
+                try
+                {
+                    if (el.TryGetProperty("info", out var einf))
                     {
-                        Season = season.Name,
-                        Num = JStr(el, "episode_num"),
-                        Title = JStr(el, "title"),
-                        Url = $"{srv}/series/{u}/{p}/{id}.{ext}"
-                    };
-                    try
-                    {
-                        if (el.TryGetProperty("info", out var einf))
-                        {
-                            epi.Plot = JStr(einf, "plot");
-                            epi.Duration = JStr(einf, "duration");
-                            epi.Image = JStr(einf, "movie_image");
-                        }
+                        epi.Plot = JStr(einf, "plot");
+                        epi.Duration = JStr(einf, "duration");
+                        epi.Image = JStr(einf, "movie_image");
                     }
-                    catch { }
-                    eps.Add(epi);
+                }
+                catch { }
+                eps.Add(epi);
+            }
+            if (episodes.ValueKind == JsonValueKind.Object)
+            {
+                // Formato clásico: {"1": [...], "2": [...]}
+                foreach (var season in episodes.EnumerateObject())
+                {
+                    if (season.Value.ValueKind == JsonValueKind.Array)
+                        foreach (var el in season.Value.EnumerateArray())
+                            AddEp(el, season.Name);
+                    else if (season.Value.ValueKind == JsonValueKind.Object)
+                        AddEp(season.Value, season.Name);
+                }
+            }
+            else if (episodes.ValueKind == JsonValueKind.Array)
+            {
+                // Formato de este proveedor: [[ep...], [ep...]] (una lista por
+                // temporada) o [{"season_number":1,"episodes":[...]}, ...]
+                foreach (var group in episodes.EnumerateArray())
+                {
+                    if (group.ValueKind == JsonValueKind.Array)
+                    {
+                        foreach (var el in group.EnumerateArray())
+                            AddEp(el, "");
+                    }
+                    else if (group.ValueKind == JsonValueKind.Object)
+                    {
+                        if (group.TryGetProperty("episodes", out var nested) && nested.ValueKind == JsonValueKind.Array)
+                        {
+                            string sn = JStr(group, "season_number");
+                            foreach (var el in nested.EnumerateArray())
+                                AddEp(el, sn);
+                        }
+                        else AddEp(group, "");
+                    }
                 }
             }
             return eps;

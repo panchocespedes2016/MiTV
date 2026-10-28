@@ -19,6 +19,8 @@ namespace MiTV
         int scope; // 0=todos, 1=TV, 2=Películas, 3=Series, 4=Deportes, 5=Guía, 6=Repetición
         bool closed;
 
+        public override void ToggleSearch() => input?.Focus();
+
         public SearchView(int scopeTab = -1)
         {
             scope = scopeTab < 0 ? 0 : scopeTab;

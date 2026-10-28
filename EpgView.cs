@@ -32,6 +32,11 @@ namespace MiTV
         StackPanel chanPanel, timePanel;
         string curCat = "Todo";
         int renderToken;
+        Border searchBar;
+        TextBox searchInput;
+        string searchQ = "";
+
+        public override void ToggleSearch() => Ui.ToggleSearchBar(searchBar, searchInput);
 
         DateTime winStartUtc, winEndUtc;
         double totalW;
@@ -74,10 +79,16 @@ namespace MiTV
 
             var root = new Grid();
             root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+            root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
             root.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
-            root.Children.Add(BuildDetail());
+            searchBar = Ui.SearchBar(out searchInput, q => { searchQ = q; RenderGrid(curCat); });
+            Grid.SetRow(searchBar, 0);
+            root.Children.Add(searchBar);
+            var detail = BuildDetail();
+            Grid.SetRow(detail, 1);
+            root.Children.Add(detail);
             var gridArea = BuildGridArea();
-            Grid.SetRow(gridArea, 1);
+            Grid.SetRow(gridArea, 2);
             root.Children.Add(gridArea);
             Content = root;
 
@@ -472,10 +483,13 @@ namespace MiTV
                 timePanel.Children.Add(Ui.Notice(Lang.T("Guía no disponible. Sincroniza la lista (la EPG se descarga junto con el contenido).")));
                 return;
             }
-            var items = ContentStore.Channels.Where(ch => cat == "Todo" || (cat == "Favoritos" ? Favorites.IsFav(ch) : ch.Group == cat)).ToList();
+            // La búsqueda cubre toda la sección, no solo la categoría abierta
+            var items = !string.IsNullOrEmpty(searchQ)
+                ? ContentStore.Channels.Where(ch => Ui.Norm(ch.Name).Contains(searchQ)).ToList()
+                : ContentStore.Channels.Where(ch => cat == "Todo" || (cat == "Favoritos" ? Favorites.IsFav(ch) : ch.Group == cat)).ToList();
             if (items.Count == 0)
             {
-                timePanel.Children.Add(Ui.Notice(Lang.T("Sin canales en esta categoría.")));
+                timePanel.Children.Add(Ui.Notice(string.IsNullOrEmpty(searchQ) ? Lang.T("Sin canales en esta categoría.") : Lang.T("Sin resultados para esta búsqueda.")));
                 return;
             }
             int i = 0;

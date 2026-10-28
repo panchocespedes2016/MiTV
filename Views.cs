@@ -10,21 +10,47 @@ namespace MiTV
 {
     public class HomeView : ViewBase
     {
+        StackPanel sp;
+        Border searchBar;
+        TextBox searchInput;
+        string searchQ = "";
+
+        public override void ToggleSearch() => Ui.ToggleSearchBar(searchBar, searchInput);
+
         public HomeView()
         {
-            var sp = new StackPanel { Margin = new Thickness(26, 4, 26, 18) };
-            bool real = ContentStore.HasData;
-            AddContinueWatching(sp);
-            AddFeaturedChannels(sp, real);
-            AddRecentMovies(sp, real);
-            AddRecentSeries(sp, real);
-            Content = new ScrollViewer { Content = sp, VerticalScrollBarVisibility = ScrollBarVisibility.Auto };
+            sp = new StackPanel { Margin = new Thickness(26, 4, 26, 18) };
+            var root = new Grid();
+            root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+            root.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
+            searchBar = Ui.SearchBar(out searchInput, q => { searchQ = q; RenderHome(); });
+            Grid.SetRow(searchBar, 0);
+            root.Children.Add(searchBar);
+            var scroll = new ScrollViewer { Content = sp, VerticalScrollBarVisibility = ScrollBarVisibility.Auto };
+            Grid.SetRow(scroll, 1);
+            root.Children.Add(scroll);
+            Content = root;
+            RenderHome();
         }
 
-        // Continuar viendo: películas incompletas (las últimas que dejó a medias)
-        void AddContinueWatching(StackPanel sp)
+        void RenderHome()
         {
-            var list = WatchHistory.ContinueWatching();
+            sp.Children.Clear();
+            bool real = ContentStore.HasData;
+            AddContinueWatching(sp, searchQ);
+            AddFeaturedChannels(sp, real, searchQ);
+            AddRecentMovies(sp, real, searchQ);
+            AddRecentSeries(sp, real, searchQ);
+            if (sp.Children.Count == 0 && !string.IsNullOrEmpty(searchQ))
+                sp.Children.Add(Ui.Notice(Lang.T("Sin resultados para esta búsqueda.")));
+        }
+
+        static bool Matches(string q, string text) => string.IsNullOrEmpty(q) || Ui.Norm(text ?? "").Contains(q);
+
+        // Continuar viendo: películas incompletas (las últimas que dejó a medias)
+        void AddContinueWatching(StackPanel sp, string q)
+        {
+            var list = WatchHistory.ContinueWatching().Where(e => Matches(q, e.Title + " " + e.Sub)).ToList();
             if (list.Count == 0) return; // sin historial no se muestra la fila
             sp.Children.Add(Ui.SectionTitle(Lang.T("Continuar viendo")));
             var row = new WrapPanel { Margin = new Thickness(0, 0, 0, 26) };
@@ -39,11 +65,10 @@ namespace MiTV
         }
 
         // Canales destacados: los más sintonizados por él
-        void AddFeaturedChannels(StackPanel sp, bool real)
+        void AddFeaturedChannels(StackPanel sp, bool real, string q)
         {
-            sp.Children.Add(Ui.SectionTitle(Lang.T("Canales destacados")));
             var row = new WrapPanel { Margin = new Thickness(0, 0, 0, 26) };
-            var top = WatchHistory.TopChannels(8);
+            var top = WatchHistory.TopChannels(8).Where(e => Matches(q, e.Title + " " + e.Sub)).ToList();
             if (top.Count > 0)
             {
                 foreach (var e in top)
@@ -56,52 +81,70 @@ namespace MiTV
             else if (real)
             {
                 foreach (var cc in ContentStore.Channels.Take(8))
+                {
+                    if (!Matches(q, cc.Name + " " + cc.Group)) continue;
                     row.Children.Add(Ui.Card(cc.Name, cc.Group, "\U0001F4FA", Lang.T("EN VIVO"), -1,
                         () => PlayerView.Open(cc.Name, cc.Group, true, cc.StreamUrl, cc.Logo), cc.Logo, true));
+                }
             }
             else
             {
                 foreach (var c in Data.Channels.Take(4))
+                {
+                    if (!Matches(q, c.Name + " " + c.Programme)) continue;
                     row.Children.Add(Ui.Card(c.Name, c.Programme, c.Icon, Lang.T("EN VIVO"), c.Progress,
                         () => PlayerView.Open(c.Name, c.Programme, true)));
+                }
             }
+            if (row.Children.Count == 0) return;
+            sp.Children.Add(Ui.SectionTitle(Lang.T("Canales destacados")));
             sp.Children.Add(row);
         }
 
         // Películas: lo más reciente del catálogo
-        void AddRecentMovies(StackPanel sp, bool real)
+        void AddRecentMovies(StackPanel sp, bool real, string q)
         {
-            sp.Children.Add(Ui.SectionTitle(Lang.T("Pel\u00edculas populares")));
             var row = new WrapPanel { Margin = new Thickness(0, 0, 0, 26) };
             if (real)
                 foreach (var mm in ContentStore.Movies.OrderByDescending(m => m.Added).Take(8))
                 {
+                    if (!Matches(q, mm.Name + " " + mm.Category)) continue;
                     var mmm = mm;
                     row.Children.Add(Ui.Card(mmm.Name, mmm.Category, "\U0001F3AC", null, -1,
                         () => Nav.Push(new MovieDetailView(mmm)), mmm.Logo));
                 }
             else
                 foreach (var m in Data.Movies.Take(4))
+                {
+                    if (!Matches(q, m.Title)) continue;
                     row.Children.Add(Ui.Card(m.Title, m.Year + " \u2022 " + m.Dur, "\U0001F3AC", m.Tag, -1,
                         () => PlayerView.Open(m.Title, m.Year + " \u2022 " + m.Dur, false)));
+                }
+            if (row.Children.Count == 0) return;
+            sp.Children.Add(Ui.SectionTitle(Lang.T("Pel\u00edculas populares")));
             sp.Children.Add(row);
         }
 
         // Series: lo más reciente del catálogo
-        void AddRecentSeries(StackPanel sp, bool real)
+        void AddRecentSeries(StackPanel sp, bool real, string q)
         {
-            sp.Children.Add(Ui.SectionTitle(Lang.T("Series")));
             var row = new WrapPanel { Margin = new Thickness(0, 0, 0, 10) };
             if (real)
                 foreach (var ss in ContentStore.Series.OrderByDescending(x => x.Added).Take(8))
                 {
+                    if (!Matches(q, ss.Name + " " + ss.Category)) continue;
                     var s2 = ss;
                     row.Children.Add(Ui.Card(ss.Name, ss.Category, "\U0001F39D", null, -1, () => OpenSerie(s2), ss.Cover));
                 }
             else
                 foreach (var s in Data.Shows)
+                {
+                    if (!Matches(q, s.Title)) continue;
                     row.Children.Add(Ui.Card(s.Title, s.Seasons, "\U0001F39D", null, -1,
                         () => PlayerView.Open(s.Title, s.Seasons, false)));
+                }
+            if (row.Children.Count == 0) return;
+            sp.Children.Add(Ui.SectionTitle(Lang.T("Series")));
             sp.Children.Add(row);
         }
 
@@ -119,6 +162,11 @@ namespace MiTV
         StackPanel catsPanel, list;
         string curCat = "Todo";
         int renderToken;
+        Border searchBar;
+        TextBox searchInput;
+        string searchQ = "";
+
+        public override void ToggleSearch() => Ui.ToggleSearchBar(searchBar, searchInput);
 
         public LiveTvView()
         {
@@ -133,7 +181,16 @@ namespace MiTV
             Grid.SetColumn(listScroll, 1);
             grid.Children.Add(listScroll);
 
-            Content = grid;
+            // Franja de búsqueda integrada encima de todo el ancho
+            var root = new Grid();
+            root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+            root.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
+            searchBar = Ui.SearchBar(out searchInput, q => { searchQ = q; RenderList(curCat); });
+            Grid.SetRow(searchBar, 0);
+            root.Children.Add(searchBar);
+            Grid.SetRow(grid, 1);
+            root.Children.Add(grid);
+            Content = root;
             string startCat = ViewState.Get("livetv");
             if (startCat != "Historial" && Array.IndexOf(Cats(), startCat) < 0) startCat = "Todo";
             RenderCats(startCat);
@@ -172,7 +229,8 @@ namespace MiTV
             curCat = cat;
             int token = ++renderToken;
             list.Children.Clear();
-            if (cat == "Historial")
+            bool searching = !string.IsNullOrEmpty(searchQ);
+            if (cat == "Historial" && !searching)
             {
                 var hist = WatchHistory.LastOpened(15, e => e.Kind == "channel");
                 if (hist.Count == 0)
@@ -194,10 +252,16 @@ namespace MiTV
                 if (PlaylistStore.Active == null)
                     list.Children.Add(Ui.Notice(Lang.T("Sin lista activa. Ve a Ajustes → Listas IPTV, agrega una lista y sincroniza.")));
                 foreach (var c in Data.Channels)
+                {
+                    if (searching && !Ui.Norm(c.Name).Contains(searchQ)) continue;
                     list.Children.Add(Ui.ChannelRow(c, () => PlayerView.Open(c.Name, c.Programme, true)));
+                }
                 return;
             }
-            var items = ContentStore.Channels.Where(ch => cat == "Todo" || cat == "Favoritos" || ch.Group == cat).ToList();
+            // La búsqueda cubre toda la sección, no solo la categoría abierta
+            var items = searching
+                ? ContentStore.Channels.Where(ch => Ui.Norm(ch.Name).Contains(searchQ)).ToList()
+                : ContentStore.Channels.Where(ch => cat == "Todo" || cat == "Favoritos" || ch.Group == cat).ToList();
             if (LiveSettings.HideNoEpg)
                 items = items.Where(ch => EpgStore.GetPrograms(ch) != null).ToList();
             List<LiveChannel> favItems = new(), restItems = items;
@@ -256,6 +320,11 @@ namespace MiTV
     {
         StackPanel catsPanel, list;
         string curCat = "Todo";
+        Border searchBar;
+        TextBox searchInput;
+        string searchQ = "";
+
+        public override void ToggleSearch() => Ui.ToggleSearchBar(searchBar, searchInput);
 
         public SportsView()
         {
@@ -270,7 +339,16 @@ namespace MiTV
             Grid.SetColumn(listScroll, 1);
             grid.Children.Add(listScroll);
 
-            Content = grid;
+            // Franja de búsqueda integrada encima de todo el ancho
+            var root = new Grid();
+            root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+            root.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
+            searchBar = Ui.SearchBar(out searchInput, q => { searchQ = q; RenderList(curCat); });
+            Grid.SetRow(searchBar, 0);
+            root.Children.Add(searchBar);
+            Grid.SetRow(grid, 1);
+            root.Children.Add(grid);
+            Content = root;
             string startCat = ViewState.Get("sports");
             if (startCat != "Historial" && Array.IndexOf(Cats(), startCat) < 0) startCat = "Todo";
             RenderCats(startCat);
@@ -319,7 +397,8 @@ namespace MiTV
         {
             curCat = cat;
             list.Children.Clear();
-            if (cat == "Historial")
+            bool searching = !string.IsNullOrEmpty(searchQ);
+            if (cat == "Historial" && !searching)
             {
                 var hist = WatchHistory.LastOpened(15, e => e.Kind == "channel" && WatchHistory.IsSportsGroup(e.Sub));
                 if (hist.Count == 0)
@@ -338,11 +417,13 @@ namespace MiTV
             }
             if (ContentStore.Channels.Count > 0)
             {
-                var all = cat == "Todo" ? SportChannels()
+                // La búsqueda cubre toda la sección, no solo la categoría abierta
+                var all = searching ? SportChannels().Where(ch => Ui.Norm(ch.Name).Contains(searchQ)).ToList()
+                    : cat == "Todo" ? SportChannels()
                     : cat == "Favoritos" ? SportChannels().Where(ch => Favorites.IsFav(ch)).ToList()
                     : ContentStore.Channels.Where(ch => ch.Group == cat).ToList();
                 if (all.Count == 0)
-                    list.Children.Add(Ui.Notice(Lang.T("No hay categorías de deportes en tu lista.")));
+                    list.Children.Add(Ui.Notice(searching ? Lang.T("Sin resultados para esta búsqueda.") : Lang.T("No hay categorías de deportes en tu lista.")));
                 int sNum = 0;
                 foreach (var ch in all)
                 {
@@ -359,7 +440,10 @@ namespace MiTV
             else
             {
                 foreach (var c in Data.Sports)
+                {
+                    if (searching && !Ui.Norm(c.Name).Contains(searchQ)) continue;
                     list.Children.Add(Ui.ChannelRow(c, () => PlayerView.Open(c.Name, c.Programme, true)));
+                }
             }
         }
     }
@@ -991,6 +1075,11 @@ namespace MiTV
         WrapPanel grid;
         string curCat = "Todo";
         int renderToken;
+        Border searchBar;
+        TextBox searchInput;
+        string searchQ = "";
+
+        public override void ToggleSearch() => Ui.ToggleSearchBar(searchBar, searchInput);
 
         public ShowsView()
         {
@@ -1002,7 +1091,16 @@ namespace MiTV
             Grid.SetColumn(scroll, 1);
             outer.Children.Add(scroll);
 
-            Content = outer;
+            // Franja de búsqueda integrada encima de todo el ancho
+            var root = new Grid();
+            root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+            root.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
+            searchBar = Ui.SearchBar(out searchInput, q => { searchQ = q; RenderShows(curCat); });
+            Grid.SetRow(searchBar, 0);
+            root.Children.Add(searchBar);
+            Grid.SetRow(outer, 1);
+            root.Children.Add(outer);
+            Content = root;
             string startCat = ViewState.Get("series");
             if (startCat != "Historial" && Array.IndexOf(Cats(), startCat) < 0) startCat = "Todo";
             RenderCats(startCat);
@@ -1043,7 +1141,8 @@ namespace MiTV
             curCat = cat;
             int token = ++renderToken;
             grid.Children.Clear();
-            if (cat == "Historial")
+            bool searching = !string.IsNullOrEmpty(searchQ);
+            if (cat == "Historial" && !searching)
             {
                 var hist = WatchHistory.LastOpened(15, e => e.Kind == "episode");
                 if (hist.Count == 0)
@@ -1064,14 +1163,18 @@ namespace MiTV
                     grid.Children.Add(Ui.Notice(Lang.T("Sin lista activa. Ve a Ajustes → Listas IPTV, agrega una lista y sincroniza.")));
                 foreach (var s in Data.Shows)
                 {
+                    if (searching && !Ui.Norm(s.Title).Contains(searchQ)) continue;
                     var card = Ui.Card(s.Title, s.Seasons, "🎭", null, -1, () => PlayerView.Open(s.Title, s.Seasons, false));
                     card.Margin = new Thickness(0, 0, 14, 14);
                     grid.Children.Add(card);
                 }
                 return;
             }
-            var items = ContentStore.Series.Where(s => cat == "Todo" || (cat == "Favoritos" ? Favorites.IsFavKey("serie:" + (s.SerieId ?? s.Name)) : s.Category == cat)).ToList();
-            if (items.Count == 0) grid.Children.Add(Ui.Notice(Lang.T("Sin series en esta categoría.")));
+            // La búsqueda cubre toda la sección, no solo la categoría abierta
+            var items = searching
+                ? ContentStore.Series.Where(s => Ui.Norm(s.Name).Contains(searchQ)).ToList()
+                : ContentStore.Series.Where(s => cat == "Todo" || (cat == "Favoritos" ? Favorites.IsFavKey("serie:" + (s.SerieId ?? s.Name)) : s.Category == cat)).ToList();
+            if (items.Count == 0) grid.Children.Add(Ui.Notice(searching ? Lang.T("Sin resultados para esta búsqueda.") : Lang.T("Sin series en esta categoría.")));
             int limit = VodSettings.ResultLimit;
             int shown = 0;
             Action addBatch = null;
@@ -1367,6 +1470,11 @@ namespace MiTV
         StackPanel catsPanel, progList;
         TextBlock chTitle;
         LiveChannel selCh;
+        Border searchBar;
+        TextBox searchInput;
+        string searchQ = "";
+
+        public override void ToggleSearch() => Ui.ToggleSearchBar(searchBar, searchInput);
 
         public CatchupView()
         {
@@ -1380,17 +1488,27 @@ namespace MiTV
             right.Children.Add(scroll);
             Grid.SetColumn(right, 1);
             outer.Children.Add(right);
-            Content = outer;
+
+            // Franja de búsqueda integrada encima de todo el ancho
+            var root = new Grid();
+            root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+            root.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
+            searchBar = Ui.SearchBar(out searchInput, q => { searchQ = q; RenderChannels(); });
+            Grid.SetRow(searchBar, 0);
+            root.Children.Add(searchBar);
+            Grid.SetRow(outer, 1);
+            root.Children.Add(outer);
+            Content = root;
             RenderChannels();
         }
 
         void RenderChannels()
         {
             catsPanel.Children.Clear();
-            var chans = ContentStore.Channels.Where(c => c.HasCatchup).OrderBy(c => c.Name).ToList();
+            var chans = ContentStore.Channels.Where(c => c.HasCatchup && (string.IsNullOrEmpty(searchQ) || Ui.Norm(c.Name).Contains(searchQ))).OrderBy(c => c.Name).ToList();
             if (chans.Count == 0)
             {
-                catsPanel.Children.Add(Ui.Notice(Lang.T("Ningún canal tiene repetición disponible.")));
+                catsPanel.Children.Add(Ui.Notice(string.IsNullOrEmpty(searchQ) ? Lang.T("Ningún canal tiene repetición disponible.") : Lang.T("Sin resultados para esta búsqueda.")));
                 return;
             }
             int n = 0;

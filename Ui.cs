@@ -128,6 +128,37 @@ namespace MiTV
                     sb.Append(c);
             return sb.ToString().ToLowerInvariant();
         }
+
+        // Barra de búsqueda integrada: la misma franja de Películas, a todo el
+        // ancho, con hueco a la derecha para el flotante [MiTV | 🔍 | ⚙️].
+        // onText recibe el texto ya normalizado (sin acentos, minúsculas).
+        public static Border SearchBar(out TextBox input, Action<string> onText)
+        {
+            var bar = new Border
+            {
+                Background = Panel, BorderBrush = Brd, BorderThickness = new Thickness(1),
+                CornerRadius = new CornerRadius(10), Padding = new Thickness(12),
+                Margin = new Thickness(20, 14, 190, 0), Visibility = Visibility.Collapsed
+            };
+            var dock = new DockPanel();
+            dock.Children.Add(new TextBlock { Text = "\U0001F50D", FontSize = 16, Foreground = Gray, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 0, 8, 0) });
+            var tb = new TextBox { Background = Brushes.Transparent, BorderThickness = new Thickness(0), Foreground = Text, CaretBrush = Text, FontSize = 15, VerticalAlignment = VerticalAlignment.Center };
+            tb.TextChanged += (s, e) => onText(Norm(tb.Text ?? ""));
+            dock.Children.Add(tb);
+            bar.Child = dock;
+            input = tb;
+            return bar;
+        }
+
+        // Muestra/oculta la barra de búsqueda integrada; al cerrar limpia el
+        // texto, lo que dispara el re-render sin filtro.
+        public static void ToggleSearchBar(Border bar, TextBox input)
+        {
+            bool show = bar.Visibility != Visibility.Visible;
+            bar.Visibility = show ? Visibility.Visible : Visibility.Collapsed;
+            if (show) input.Focus();
+            else input.Text = "";
+        }
         public static SolidColorBrush B(string hex)
         {
             var c = (Color)ColorConverter.ConvertFromString(hex);
