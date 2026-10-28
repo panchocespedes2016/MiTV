@@ -15,6 +15,24 @@ namespace MiTV
 {
     public class MainWindow : Window
     {
+        Grid rootGrid, titleBarGrid;
+
+        // En fullscreen el reproductor oculta la barra superior propia
+        // (título + botones) y la franja de arrastre, para que solo se vea el video.
+        public void SetFullscreenChrome(bool fullscreen)
+        {
+            if (titleBarGrid != null)
+                titleBarGrid.Visibility = fullscreen ? Visibility.Collapsed : Visibility.Visible;
+            if (rootGrid != null)
+                rootGrid.RowDefinitions[0].Height = new GridLength(fullscreen ? 0 : 36);
+            try
+            {
+                var wc = System.Windows.Shell.WindowChrome.GetWindowChrome(this);
+                if (wc != null) wc.CaptionHeight = fullscreen ? 0 : 36;
+            }
+            catch { }
+        }
+
         // Hook WH_KEYBOARD_LL: las teclas deben llegar aunque el foco esté en la
         // ventana transparente del overlay del video (no en la ventana principal)
         IntPtr kbHook = IntPtr.Zero;
@@ -97,6 +115,10 @@ namespace MiTV
             catch { }
         }
 
+        // En modo fullscreen del reproductor, maximizar debe cubrir el monitor
+        // completo (incluida la barra de tareas); si no, solo el área de trabajo.
+        public static bool FullscreenMax = false;
+
         // Al maximizar, limitar la ventana al área de trabajo del monitor: con el
         // marco propio de la app, Windows maximiza a pantalla completa y tapa la
         // barra de tareas; WM_GETMINMAXINFO permite corregir tamaño y posición.
@@ -114,10 +136,11 @@ namespace MiTV
                         var mi = new MONITORINFO { cbSize = Marshal.SizeOf<MONITORINFO>() };
                         if (GetMonitorInfo(mon, ref mi))
                         {
-                            mmi.ptMaxPosition.x = mi.rcWork.left - mi.rcMonitor.left;
-                            mmi.ptMaxPosition.y = mi.rcWork.top - mi.rcMonitor.top;
-                            mmi.ptMaxSize.x = mi.rcWork.right - mi.rcWork.left;
-                            mmi.ptMaxSize.y = mi.rcWork.bottom - mi.rcWork.top;
+                            var lim = FullscreenMax ? mi.rcMonitor : mi.rcWork;
+                            mmi.ptMaxPosition.x = lim.left - mi.rcMonitor.left;
+                            mmi.ptMaxPosition.y = lim.top - mi.rcMonitor.top;
+                            mmi.ptMaxSize.x = lim.right - lim.left;
+                            mmi.ptMaxSize.y = lim.bottom - lim.top;
                             Marshal.StructureToPtr(mmi, lParam, true);
                         }
                     }
@@ -133,6 +156,21 @@ namespace MiTV
         [StructLayout(LayoutKind.Sequential)] private struct MONITORINFO { public int cbSize; public RECTL rcMonitor, rcWork; public int dwFlags; }
         [DllImport("user32.dll")] private static extern IntPtr MonitorFromWindow(IntPtr hwnd, int dwFlags);
         [DllImport("user32.dll")] private static extern bool GetMonitorInfo(IntPtr hMonitor, ref MONITORINFO lpmi);
+
+        // Rectángulo COMPLETO del monitor donde está la ventana (píxeles físicos).
+        // Para el fullscreen del reproductor: no depende del hook de maximizar.
+        public static (int Left, int Top, int Right, int Bottom)? MonitorFullRect(IntPtr hwnd)
+        {
+            try
+            {
+                IntPtr mon = MonitorFromWindow(hwnd, 2); // MONITOR_DEFAULTTONEAREST
+                if (mon == IntPtr.Zero) return null;
+                var mi = new MONITORINFO { cbSize = Marshal.SizeOf<MONITORINFO>() };
+                if (!GetMonitorInfo(mon, ref mi)) return null;
+                return (mi.rcMonitor.left, mi.rcMonitor.top, mi.rcMonitor.right, mi.rcMonitor.bottom);
+            }
+            catch { return null; }
+        }
         public ContentControl MainContent;
         private Border pill, tabBar;
         private UniformGrid tabsGrid;
@@ -153,8 +191,10 @@ namespace MiTV
             {
                 CaptionHeight = 36,
                 CornerRadius = new CornerRadius(0),
-                GlassFrameThickness = new Thickness(0),
-                ResizeBorderThickness = new Thickness(6)
+                // 1px de cristal + borde de agarre de 8px: con cristal en 0 los
+                // agarres laterales no respondían (quirk del WindowChrome).
+                GlassFrameThickness = new Thickness(1),
+                ResizeBorderThickness = new Thickness(8)
             };
             System.Windows.Shell.WindowChrome.SetWindowChrome(this, chrome);
             try
@@ -172,10 +212,12 @@ namespace MiTV
             Closing += (_, __) => SaveWindowPlacement();
 
             var root = new Grid();
+            rootGrid = root;
             root.RowDefinitions.Add(new RowDefinition { Height = new GridLength(36) });
             root.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
             // Barra de título personalizada
             var titleBar = new Grid { Background = Ui.B("#1a1a1a") };
+            titleBarGrid = titleBar;
             titleBar.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
             titleBar.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
             titleBar.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });

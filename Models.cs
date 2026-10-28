@@ -5,6 +5,7 @@ namespace MiTV
         public string Name, Programme, Icon;
         public string Logo; // URL del logo (opcional)
         public int Progress;
+        public string TimeRange = ""; // "HH:mm – HH:mm" del programa actual (vacío = no mostrar)
         public int Number; // número de canal (0 = no mostrar)
         public string Tag = ""; // ej: "catchup"
         public Channel(string n, string p, string i, int pr) { Name = n; Programme = p; Icon = i; Progress = pr; }

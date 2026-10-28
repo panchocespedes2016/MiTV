@@ -8,6 +8,7 @@ using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
+using System.Windows.Interop;
 using System.Windows.Media;
 using System.Windows.Shapes;
 using System.Windows.Threading;
@@ -131,6 +132,7 @@ namespace MiTV
         Border spinner, volFill;
         bool isFullscreen;
         bool prevMaximized;
+        Rect prevBounds;
         bool noBackground; // enviar a VLC: no transferir a segundo plano al salir
 
         // Menú de audio / subtítulos
@@ -1283,8 +1285,28 @@ namespace MiTV
             if (!isFullscreen)
             {
                 prevMaximized = w.WindowState == WindowState.Maximized;
+                prevBounds = w.RestoreBounds;
                 w.WindowStyle = WindowStyle.None;
-                w.WindowState = WindowState.Maximized;
+                // Fullscreen de verdad: la ventana ocupa el monitor completo
+                // (barra de tareas tapada) con límites explícitos + Topmost,
+                // sin depender del maximizar ni de su hook.
+                MainWindow.FullscreenMax = true;
+                var hwnd = new WindowInteropHelper(w).Handle;
+                var full = MainWindow.MonitorFullRect(hwnd);
+                double l = 0, t = 0, fw = SystemParameters.PrimaryScreenWidth, fh = SystemParameters.PrimaryScreenHeight;
+                if (full != null)
+                {
+                    var dpi = VisualTreeHelper.GetDpi(w);
+                    l = full.Value.Left / dpi.DpiScaleX;
+                    t = full.Value.Top / dpi.DpiScaleY;
+                    fw = (full.Value.Right - full.Value.Left) / dpi.DpiScaleX;
+                    fh = (full.Value.Bottom - full.Value.Top) / dpi.DpiScaleY;
+                }
+                w.WindowState = WindowState.Normal;
+                w.ResizeMode = ResizeMode.NoResize;
+                w.Topmost = true;
+                w.Left = l; w.Top = t; w.Width = fw; w.Height = fh;
+                w.SetFullscreenChrome(true);
             }
             else RestoreChrome();
             isFullscreen = !isFullscreen;
@@ -1293,7 +1315,13 @@ namespace MiTV
         void RestoreChrome()
         {
             var w = Nav.Main;
+            MainWindow.FullscreenMax = false;
+            w.SetFullscreenChrome(false);
+            w.Topmost = false;
+            w.ResizeMode = ResizeMode.CanResize;
             w.WindowStyle = WindowStyle.None;
+            w.Left = prevBounds.Left; w.Top = prevBounds.Top;
+            w.Width = prevBounds.Width; w.Height = prevBounds.Height;
             w.WindowState = prevMaximized ? WindowState.Maximized : WindowState.Normal;
         }
 

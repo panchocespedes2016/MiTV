@@ -7,7 +7,7 @@
     <Nullable>disable</Nullable>
     <AssemblyName>MiTV</AssemblyName>
     <RootNamespace>MiTV</RootNamespace>
-    <Version>1.0.5</Version>
+    <Version>1.0.6</Version>
     <Description>Prototipo navegable estilo iMPlayer - para discutir pantallas y botones</Description>
     <ApplicationIcon>icon.ico</ApplicationIcon>
   </PropertyGroup>

@@ -5,6 +5,9 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
 using System.Windows.Threading;
+using LibVLCSharp.Shared;
+using LibVLCSharp.WPF;
+using VlcPlayer = LibVLCSharp.Shared.MediaPlayer;
 
 namespace MiTV
 {
@@ -37,6 +40,7 @@ namespace MiTV
         {
             sp.Children.Clear();
             bool real = ContentStore.HasData;
+            AddFavoritesRow(sp, searchQ);
             AddContinueWatching(sp, searchQ);
             AddFeaturedChannels(sp, real, searchQ);
             AddRecentMovies(sp, real, searchQ);
@@ -46,6 +50,34 @@ namespace MiTV
         }
 
         static bool Matches(string q, string text) => string.IsNullOrEmpty(q) || Ui.Norm(text ?? "").Contains(q);
+
+        // Favoritos: películas y series marcadas con ★, primero en Inicio.
+        // Si no hay ninguno no se muestra la fila.
+        void AddFavoritesRow(StackPanel sp, string q)
+        {
+            if (!ContentStore.HasData) return;
+            var row = new WrapPanel { Margin = new Thickness(0, 0, 0, 26) };
+            foreach (var m in ContentStore.Movies.Where(m => Favorites.IsFavKey(m.StreamUrl)))
+            {
+                if (!Matches(q, m.Name + " " + m.Category)) continue;
+                var mm = m;
+                row.Children.Add(Ui.Card(mm.Name, mm.Category, "\U0001F3AC", null, -1,
+                    () => Nav.Push(new MovieDetailView(mm)), mm.Logo,
+                    fav: () => (Favorites.IsFavKey(mm.StreamUrl), () => { Favorites.ToggleKey(mm.StreamUrl); RenderHome(); }),
+                    menu: () => CardMenus.MovieMenu(mm.Name, mm.Category, mm.StreamUrl, mm.Logo, RenderHome)));
+            }
+            foreach (var s in ContentStore.Series.Where(s => Favorites.IsFavKey("serie:" + (s.SerieId ?? s.Name))))
+            {
+                if (!Matches(q, s.Name + " " + s.Category)) continue;
+                var ss = s;
+                row.Children.Add(Ui.Card(ss.Name, ss.Category, "\U0001F39D", null, -1, () => OpenSerie(ss), ss.Cover,
+                    fav: () => (Favorites.IsFavKey("serie:" + (ss.SerieId ?? ss.Name)), () => { Favorites.ToggleKey("serie:" + (ss.SerieId ?? ss.Name)); RenderHome(); }),
+                    menu: () => CardMenus.SerieMenu(ss, RenderHome)));
+            }
+            if (row.Children.Count == 0) return;
+            sp.Children.Add(Ui.SectionTitle("★ " + Lang.T("Tus favoritos")));
+            sp.Children.Add(row);
+        }
 
         // Continuar viendo: películas incompletas (las últimas que dejó a medias)
         void AddContinueWatching(StackPanel sp, string q)
@@ -59,7 +91,9 @@ namespace MiTV
                 string key = e.Key;
                 int pct = e.DurationMs > 0 ? (int)(e.PositionMs * 100 / e.DurationMs) : 0;
                 row.Children.Add(Ui.Card(e.Title, e.Sub, "\U0001F3AC", null, pct,
-                    () => PlayerView.Open(e.Title, e.Sub, false, key, e.Logo, e.PositionMs), e.Logo));
+                    () => PlayerView.Open(e.Title, e.Sub, false, key, e.Logo, e.PositionMs), e.Logo,
+                    fav: () => (Favorites.IsFavKey(key), () => { Favorites.ToggleKey(key); RenderHome(); }),
+                    menu: () => CardMenus.MovieMenu(e.Title, e.Sub, key, e.Logo, RenderHome)));
             }
             sp.Children.Add(row);
         }
@@ -75,7 +109,9 @@ namespace MiTV
                 {
                     string key = e.Key;
                     row.Children.Add(Ui.Card(e.Title, e.Sub, "\U0001F4FA", Lang.T("EN VIVO"), -1,
-                        () => PlayerView.Open(e.Title, e.Sub, true, key, e.Logo), e.Logo, true));
+                        () => PlayerView.Open(e.Title, e.Sub, true, key, e.Logo), e.Logo, true,
+                        fav: () => (Favorites.IsFavKey(key), () => { Favorites.ToggleKey(key); RenderHome(); }),
+                        menu: () => CardMenus.ChannelMenu(key, RenderHome)));
                 }
             }
             else if (real)
@@ -84,7 +120,9 @@ namespace MiTV
                 {
                     if (!Matches(q, cc.Name + " " + cc.Group)) continue;
                     row.Children.Add(Ui.Card(cc.Name, cc.Group, "\U0001F4FA", Lang.T("EN VIVO"), -1,
-                        () => PlayerView.Open(cc.Name, cc.Group, true, cc.StreamUrl, cc.Logo), cc.Logo, true));
+                        () => PlayerView.Open(cc.Name, cc.Group, true, cc.StreamUrl, cc.Logo), cc.Logo, true,
+                        fav: () => (Favorites.IsFav(cc), () => { Favorites.Toggle(cc); RenderHome(); }),
+                        menu: () => CardMenus.ChannelMenu(cc.StreamUrl, RenderHome)));
                 }
             }
             else
@@ -111,7 +149,9 @@ namespace MiTV
                     if (!Matches(q, mm.Name + " " + mm.Category)) continue;
                     var mmm = mm;
                     row.Children.Add(Ui.Card(mmm.Name, mmm.Category, "\U0001F3AC", null, -1,
-                        () => Nav.Push(new MovieDetailView(mmm)), mmm.Logo));
+                        () => Nav.Push(new MovieDetailView(mmm)), mmm.Logo,
+                        fav: () => (Favorites.IsFavKey(mmm.StreamUrl), () => { Favorites.ToggleKey(mmm.StreamUrl); RenderHome(); }),
+                        menu: () => CardMenus.MovieMenu(mmm.Name, mmm.Category, mmm.StreamUrl, mmm.Logo, RenderHome)));
                 }
             else
                 foreach (var m in Data.Movies.Take(4))
@@ -134,7 +174,9 @@ namespace MiTV
                 {
                     if (!Matches(q, ss.Name + " " + ss.Category)) continue;
                     var s2 = ss;
-                    row.Children.Add(Ui.Card(ss.Name, ss.Category, "\U0001F39D", null, -1, () => OpenSerie(s2), ss.Cover));
+                    row.Children.Add(Ui.Card(ss.Name, ss.Category, "\U0001F39D", null, -1, () => OpenSerie(s2), ss.Cover,
+                        fav: () => (Favorites.IsFavKey("serie:" + (s2.SerieId ?? s2.Name)), () => { Favorites.ToggleKey("serie:" + (s2.SerieId ?? s2.Name)); RenderHome(); }),
+                        menu: () => CardMenus.SerieMenu(s2, RenderHome)));
                 }
             else
                 foreach (var s in Data.Shows)
@@ -157,6 +199,89 @@ namespace MiTV
         }
     }
 
+    // Menús de clic derecho en tarjetas y filas: favorito, reproducir y visto.
+    // Se arman en el momento de abrirlos, con el estado actual.
+    static class CardMenus
+    {
+        static ContextMenu Base()
+            => new ContextMenu { Background = Ui.Panel, BorderBrush = Ui.Brd, Foreground = Ui.Text };
+
+        public static ContextMenu MovieMenu(string name, string category, string url, string logo, Action refresh)
+        {
+            var cm = Base();
+            bool fav = Favorites.IsFavKey(url);
+            var miFav = new MenuItem { Header = (fav ? "☆ " : "★ ") + Lang.T(fav ? "Quitar de favoritos" : "Agregar a favoritos") };
+            miFav.Click += (s, e) => { Favorites.ToggleKey(url); refresh?.Invoke(); };
+            cm.Items.Add(miFav);
+            long posMs = 0, durMs = 0;
+            try
+            {
+                var he = WatchHistory.LastOpened(1000, x => x.Kind == "movie" && x.Key == url).FirstOrDefault();
+                if (he != null) { posMs = he.PositionMs; durMs = he.DurationMs; }
+            }
+            catch { }
+            bool hasProgress = durMs > 0 && posMs >= durMs * 0.03 && posMs < durMs * 0.95;
+            var miPlay = new MenuItem { Header = "▶ " + Lang.T(hasProgress ? "Continuar" : "Reproducir") };
+            miPlay.Click += (s, e) => PlayerView.Open(name, category, false, url, logo, hasProgress ? posMs : 0);
+            cm.Items.Add(miPlay);
+            if (!WatchHistory.IsWatched(url))
+            {
+                var miSeen = new MenuItem { Header = "✓ " + Lang.T("Marcar como visto") };
+                miSeen.Click += (s, e) => { WatchHistory.SetWatched(url, name, category, logo, "movie", category); refresh?.Invoke(); };
+                cm.Items.Add(miSeen);
+            }
+            return cm;
+        }
+
+        public static ContextMenu SerieMenu(SerieItem s, Action refresh)
+        {
+            var cm = Base();
+            string key = "serie:" + (s.SerieId ?? s.Name);
+            bool fav = Favorites.IsFavKey(key);
+            var miFav = new MenuItem { Header = (fav ? "☆ " : "★ ") + Lang.T(fav ? "Quitar de favoritos" : "Agregar a favoritos") };
+            miFav.Click += (s, e) => { Favorites.ToggleKey(key); refresh?.Invoke(); };
+            cm.Items.Add(miFav);
+            var miPlay = new MenuItem { Header = "▶ " + Lang.T("Reproducir") };
+            miPlay.Click += (s2, e2) => PlaySerieAsync(s);
+            cm.Items.Add(miPlay);
+            return cm;
+        }
+
+        public static ContextMenu ChannelMenu(string url, Action refresh)
+        {
+            var cm = Base();
+            bool fav = Favorites.IsFavKey(url);
+            var miFav = new MenuItem { Header = (fav ? "☆ " : "★ ") + Lang.T(fav ? "Quitar de favoritos" : "Agregar a favoritos") };
+            miFav.Click += (s, e) => { Favorites.ToggleKey(url); refresh?.Invoke(); };
+            cm.Items.Add(miFav);
+            return cm;
+        }
+
+        // Reproducir una serie: continúa el episodio a medias si lo hay,
+        // si no el primero; si no cargan los episodios abre la ficha.
+        static async void PlaySerieAsync(SerieItem s)
+        {
+            try
+            {
+                var eps = await PlaylistLoader.GetSeriesEpisodesAsync(s.SerieId);
+                if (eps != null && eps.Count > 0)
+                {
+                    var urls = new HashSet<string>(eps.Select(x => x.Url));
+                    var he = WatchHistory.LastOpened(2000, x => x.Kind == "episode" && urls.Contains(x.Key) && x.DurationMs > 0 && x.PositionMs >= x.DurationMs * 0.03 && x.PositionMs < x.DurationMs * 0.95).FirstOrDefault();
+                    var ep = he != null ? eps.FirstOrDefault(x => x.Url == he.Key) : null;
+                    long from = 0;
+                    if (ep == null) ep = eps[0];
+                    else from = he.PositionMs;
+                    string title = string.IsNullOrEmpty(ep.Title) ? Lang.T("Episodio ") + ep.Num : ep.Title;
+                    PlayerView.Open(title, "S" + Ui.Pad2(ep.Season) + " E" + Ui.Pad2(ep.Num), false, ep.Url, s.Cover, from, "episode", s.Category);
+                    return;
+                }
+            }
+            catch { }
+            Nav.Push(new SerieDetailView(s));
+        }
+    }
+
     public class LiveTvView : ViewBase
     {
         StackPanel catsPanel, list;
@@ -166,20 +291,81 @@ namespace MiTV
         TextBox searchInput;
         string searchQ = "";
 
+        // Vista previa (panel derecho): mismo patrón que la Guía — video
+        // muteado con overlays DENTRO del VideoView (airspace de WPF).
+        VideoView previewVideo;
+        Border logoBox, nextBox;
+        TextBlock logoEmoji, liveBadge, previewPill, previewHint;
+        TextBlock dChName, dChSub, dProgName, dTime, dDesc, nextTitle, nextTime;
+        LibVLC previewVlc;
+        VlcPlayer previewMp;
+        LiveChannel selectedChannel;
+        string selectedUrl = "";
+        int selectedNumber;
+        Border selectedRow;
+        DispatcherTimer detailTimer, listTimer;
+        ScrollViewer listScroll;
+        double pendingScrollRestore = -1;
+        DateTime lastFullOpen;
+
         public override void ToggleSearch() => Ui.ToggleSearchBar(searchBar, searchInput);
+
+        public override void OnLeave()
+        {
+            try { detailTimer?.Stop(); } catch { }
+            try { listTimer?.Stop(); } catch { }
+            try
+            {
+                if (previewVideo != null) previewVideo.MediaPlayer = null;
+                if (previewMp != null) { try { previewMp.Stop(); } catch { } previewMp.Dispose(); previewMp = null; }
+                if (previewVlc != null) { previewVlc.Dispose(); previewVlc = null; }
+            }
+            catch { }
+        }
 
         public LiveTvView()
         {
             var grid = Ui.TwoColumns(240);
+            // La columna del preview es proporcional (0.55*): con 480 fijos la
+            // lista quedaba sin ancho en ventanas no maximizadas y los nombres
+            // solo se veían por la rendija de la marquesina.
+            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(0.55, GridUnitType.Star) });
             catsPanel = Ui.CategorySidebar(grid, 0, out _);
 
-            var right = new StackPanel { Margin = new Thickness(20, 14, 26, 18) };
-            right.Children.Add(Ui.SectionTitle(Lang.T("Todos los canales")));
-            list = new StackPanel();
-            right.Children.Add(list);
-            var listScroll = new ScrollViewer { Content = right, VerticalScrollBarVisibility = ScrollBarVisibility.Auto };
-            Grid.SetColumn(listScroll, 1);
-            grid.Children.Add(listScroll);
+            // El título queda FUERA del scroll: fijo arriba, solo se mueve la lista
+            var right = new Grid();
+            right.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+            right.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
+            var listTitle = Ui.SectionTitle(Lang.T("Todos los canales"));
+            listTitle.Margin = new Thickness(20, 14, 26, 12);
+            Grid.SetRow(listTitle, 0);
+            right.Children.Add(listTitle);
+            list = new StackPanel { Margin = new Thickness(20, 0, 26, 18) };
+            var listScroll = new ScrollViewer { Content = list, VerticalScrollBarVisibility = ScrollBarVisibility.Auto };
+            this.listScroll = listScroll;
+            Grid.SetRow(listScroll, 1);
+            right.Children.Add(listScroll);
+            Grid.SetColumn(right, 1);
+            grid.Children.Add(right);
+
+            var previewPanel = BuildPreviewPanel();
+            Grid.SetColumn(previewPanel, 2);
+            grid.Children.Add(previewPanel);
+
+            detailTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(60) };
+            detailTimer.Tick += (s, e) => { if (selectedChannel != null) UpdateDetailPanel(selectedChannel); };
+
+            // La guía de las filas caduca (programa y % viejos si la app queda
+            // abierta): refresca la lista cada 5 min sin tocar el preview
+            // y restaurando la posición de scroll al terminar el dibujo.
+            listTimer = new DispatcherTimer { Interval = TimeSpan.FromMinutes(5) };
+            listTimer.Tick += (s, e) =>
+            {
+                if (ContentStore.Channels.Count == 0) return;
+                pendingScrollRestore = listScroll.VerticalOffset;
+                RenderList(curCat);
+            };
+            listTimer.Start();
 
             // Franja de búsqueda integrada encima de todo el ancho
             var root = new Grid();
@@ -192,9 +378,260 @@ namespace MiTV
             root.Children.Add(grid);
             Content = root;
             string startCat = ViewState.Get("livetv");
-            if (startCat != "Historial" && Array.IndexOf(Cats(), startCat) < 0) startCat = "Todo";
+            if (startCat != "Historial" && startCat != "Favoritos" && Array.IndexOf(Cats(), startCat) < 0) startCat = "Todo";
             RenderCats(startCat);
             RenderList(startCat);
+        }
+
+        // Panel derecho: video 16:9 + canal + ahora/siguiente.
+        Border BuildPreviewPanel()
+        {
+            var panel = new Border
+            {
+                Background = Ui.Bg,
+                BorderBrush = Ui.Brd,
+                BorderThickness = new Thickness(1, 0, 0, 0),
+                Padding = new Thickness(18, 14, 18, 18)
+            };
+            var sp = new StackPanel();
+
+            var pv = new Border
+            {
+                Height = 250,
+                CornerRadius = new CornerRadius(10),
+                Background = Brushes.Black,
+                BorderBrush = Ui.Brd,
+                BorderThickness = new Thickness(1),
+                ClipToBounds = true,
+                Margin = new Thickness(0, 0, 0, 16)
+            };
+            // El alto sigue al ancho (16:9) porque la columna ya no es fija
+            pv.SizeChanged += (s, e) => { if (e.WidthChanged) pv.Height = Math.Max(120, pv.ActualWidth * 9.0 / 16.0); };
+            var pvg = new Grid();
+            previewVideo = new VideoView
+            {
+                HorizontalAlignment = HorizontalAlignment.Stretch,
+                VerticalAlignment = VerticalAlignment.Stretch
+            };
+            pvg.Children.Add(previewVideo);
+            liveBadge = new TextBlock
+            {
+                Text = "● " + Lang.T("EN VIVO"),
+                FontSize = 12, FontWeight = FontWeights.Bold, Foreground = Brushes.White,
+                Background = Ui.Red, Padding = new Thickness(10, 5, 10, 5),
+                HorizontalAlignment = HorizontalAlignment.Left, VerticalAlignment = VerticalAlignment.Top,
+                Margin = new Thickness(10, 10, 0, 0), Visibility = Visibility.Collapsed
+            };
+            previewHint = new TextBlock
+            {
+                Text = Lang.T("Haz clic en un canal para ver la vista previa"),
+                FontSize = 13, Foreground = Ui.Gray,
+                HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center,
+                TextWrapping = TextWrapping.Wrap, TextAlignment = TextAlignment.Center,
+                Margin = new Thickness(30, 0, 30, 0)
+            };
+            previewPill = new TextBlock
+            {
+                Text = "🔇 " + Lang.T("Vista previa"),
+                FontSize = 12, Foreground = Brushes.White,
+                Background = new SolidColorBrush(Color.FromArgb(160, 0, 0, 0)),
+                Padding = new Thickness(10, 4, 10, 4),
+                HorizontalAlignment = HorizontalAlignment.Right, VerticalAlignment = VerticalAlignment.Bottom,
+                Margin = new Thickness(0, 0, 10, 10), Visibility = Visibility.Collapsed
+            };
+            // Los overlays van DENTRO del VideoView (igual que en la Guía):
+            // LibVLCSharp los muestra sobre el video; como hermanos, el video los tapa.
+            var over = new Grid { Background = new SolidColorBrush(Color.FromArgb(1, 0, 0, 0)) };
+            over.Children.Add(liveBadge);
+            over.Children.Add(previewHint);
+            over.Children.Add(previewPill);
+            over.MouseLeftButtonDown += (s, e) => { if (selectedChannel != null) OpenFull(); };
+            previewVideo.Content = over;
+            pv.Child = pvg;
+            sp.Children.Add(pv);
+
+            // Encabezado del canal: logo + nombre + grupo
+            var head = new Grid { Margin = new Thickness(0, 0, 0, 12) };
+            head.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+            head.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            logoBox = new Border
+            {
+                Width = 52, Height = 52,
+                CornerRadius = new CornerRadius(8),
+                Background = Ui.Panel2,
+                BorderBrush = Brushes.White,
+                BorderThickness = new Thickness(1),
+                Margin = new Thickness(0, 0, 14, 0),
+                VerticalAlignment = VerticalAlignment.Center
+            };
+            logoEmoji = new TextBlock { Text = "\U0001F4FA", FontSize = 22, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center };
+            logoBox.Child = logoEmoji;
+            head.Children.Add(logoBox);
+            var headTx = new StackPanel { VerticalAlignment = VerticalAlignment.Center };
+            dChName = new TextBlock { FontSize = 17, FontWeight = FontWeights.Bold, Foreground = Ui.Text, TextTrimming = TextTrimming.CharacterEllipsis };
+            dChSub = new TextBlock { FontSize = 13, Foreground = Ui.Gray, TextTrimming = TextTrimming.CharacterEllipsis, Margin = new Thickness(0, 2, 0, 0) };
+            headTx.Children.Add(dChName);
+            headTx.Children.Add(dChSub);
+            Grid.SetColumn(headTx, 1);
+            head.Children.Add(headTx);
+            sp.Children.Add(head);
+
+            dProgName = new TextBlock { FontSize = 21, FontWeight = FontWeights.Bold, Foreground = Ui.Text, TextWrapping = TextWrapping.Wrap };
+            sp.Children.Add(dProgName);
+            dTime = new TextBlock { FontSize = 14, FontWeight = FontWeights.SemiBold, Foreground = Ui.B("#E8A13D"), Margin = new Thickness(0, 4, 0, 0) };
+            sp.Children.Add(dTime);
+            dDesc = new TextBlock { FontSize = 14, Foreground = Ui.Gray, Margin = new Thickness(0, 8, 0, 0), TextWrapping = TextWrapping.Wrap, MaxHeight = 120 };
+            sp.Children.Add(dDesc);
+
+            nextBox = new Border
+            {
+                Background = Ui.Panel,
+                BorderBrush = Ui.Brd,
+                BorderThickness = new Thickness(1),
+                CornerRadius = new CornerRadius(10),
+                Padding = new Thickness(14, 12, 14, 12),
+                Margin = new Thickness(0, 16, 0, 0),
+                Visibility = Visibility.Collapsed
+            };
+            var nextSp = new StackPanel();
+            nextSp.Children.Add(new TextBlock { Text = Lang.T("A CONTINUACIÓN"), FontSize = 12, FontWeight = FontWeights.Bold, Foreground = Ui.Red });
+            nextTitle = new TextBlock { FontSize = 15, FontWeight = FontWeights.Bold, Foreground = Ui.Text, TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 4, 0, 0) };
+            nextSp.Children.Add(nextTitle);
+            nextTime = new TextBlock { FontSize = 13, Foreground = Ui.Gray, Margin = new Thickness(0, 2, 0, 0) };
+            nextSp.Children.Add(nextTime);
+            nextBox.Child = nextSp;
+            sp.Children.Add(nextBox);
+
+            sp.Children.Add(new TextBlock
+            {
+                Text = Lang.T("Doble clic o Enter = ver en pantalla completa · clic en la vista previa también abre el canal"),
+                FontSize = 12, Foreground = Ui.Gray, TextWrapping = TextWrapping.Wrap,
+                Margin = new Thickness(0, 16, 0, 0)
+            });
+
+            var scroll = new ScrollViewer { Content = sp, VerticalScrollBarVisibility = ScrollBarVisibility.Auto };
+            panel.Child = scroll;
+            return panel;
+        }
+
+        // Programa actual y siguiente de un canal (título, progreso %, horario).
+        static (string prog, int pct, string range) NowInfo(LiveChannel c)
+        {
+            var (now, _) = EpgStore.GetNowNext(c);
+            if (now == null) return (Lang.T("Sin información de guía"), 0, "");
+            int pct = 0;
+            double total = (now.StopUtc - now.StartUtc).TotalMinutes;
+            if (total > 0) pct = (int)Math.Round((DateTime.UtcNow - now.StartUtc).TotalMinutes / total * 100);
+            pct = Math.Max(0, Math.Min(100, pct));
+            string range = now.StartUtc.ToLocalTime().ToString("HH:mm") + " – " + now.StopUtc.ToLocalTime().ToString("HH:mm");
+            return (now.Title, pct, range);
+        }
+
+        void SelectChannel(LiveChannel c, int number, Border rowB)
+        {
+            if (c == null || string.IsNullOrEmpty(c.StreamUrl)) return;
+            // El 2º clic del doble clic no debe re-seleccionar tras abrir el reproductor
+            if ((DateTime.Now - lastFullOpen).TotalMilliseconds < 600) return;
+            selectedChannel = c;
+            selectedUrl = c.StreamUrl;
+            selectedNumber = number;
+            if (selectedRow != null && selectedRow != rowB)
+            {
+                try { selectedRow.BorderBrush = Ui.Brd; } catch { }
+            }
+            selectedRow = rowB;
+            if (rowB != null)
+            {
+                try { rowB.BorderBrush = Ui.Red; } catch { }
+            }
+            UpdateDetailPanel(c);
+            PlayPreview(c);
+            detailTimer.Start();
+        }
+
+        void UpdateDetailPanel(LiveChannel c)
+        {
+            logoBox.Background = Ui.Panel2;
+            logoEmoji.Visibility = Visibility.Visible;
+            if (!string.IsNullOrEmpty(c.Logo)) ImgCache.Load(logoBox, logoEmoji, c.Logo, 104);
+            dChName.Text = (selectedNumber > 0 ? selectedNumber + " · " : "") + c.Name;
+            string sub = c.Group ?? "";
+            if (c.HasCatchup) sub += (sub.Length > 0 ? " · " : "") + "↺ " + Lang.T("Con repetición");
+            dChSub.Text = sub;
+            dChSub.Visibility = sub.Length > 0 ? Visibility.Visible : Visibility.Collapsed;
+            var (now, next) = EpgStore.GetNowNext(c);
+            if (now != null)
+            {
+                dProgName.Text = now.Title;
+                int mins = Math.Max(1, (int)Math.Ceiling((now.StopUtc - DateTime.UtcNow).TotalMinutes));
+                dTime.Text = now.StartUtc.ToLocalTime().ToString("HH:mm") + " – " + now.StopUtc.ToLocalTime().ToString("HH:mm") + " · " + Lang.T("Termina en") + " " + mins + " min";
+                dTime.Visibility = Visibility.Visible;
+                dDesc.Text = now.Desc ?? "";
+                dDesc.Visibility = string.IsNullOrWhiteSpace(now.Desc) ? Visibility.Collapsed : Visibility.Visible;
+            }
+            else
+            {
+                dProgName.Text = Lang.T("Sin información de guía");
+                dTime.Visibility = Visibility.Collapsed;
+                dDesc.Visibility = Visibility.Collapsed;
+            }
+            if (next != null)
+            {
+                nextTitle.Text = next.Title;
+                nextTime.Text = next.StartUtc.ToLocalTime().ToString("HH:mm") + " – " + next.StopUtc.ToLocalTime().ToString("HH:mm");
+                nextBox.Visibility = Visibility.Visible;
+            }
+            else nextBox.Visibility = Visibility.Collapsed;
+        }
+
+        void PlayPreview(LiveChannel c)
+        {
+            if (string.IsNullOrEmpty(c.StreamUrl)) return;
+            try
+            {
+                if (previewVlc == null)
+                {
+                    try { Core.Initialize(); } catch { }
+                    previewVlc = new LibVLC("--no-video-title-show");
+                    previewMp = new VlcPlayer(previewVlc);
+                    previewMp.Mute = true;
+                    previewVideo.MediaPlayer = previewMp;
+                }
+                else { try { previewMp.Stop(); } catch { } }
+                var media = new Media(previewVlc, c.StreamUrl, FromType.FromLocation);
+                media.AddOption(":network-caching=1000");
+                previewMp.Play(media);
+                media.Dispose();
+                liveBadge.Visibility = Visibility.Visible;
+                previewPill.Visibility = Visibility.Visible;
+                previewHint.Visibility = Visibility.Collapsed;
+            }
+            catch
+            {
+                previewHint.Text = Lang.T("No se pudo reproducir este canal");
+                previewHint.Visibility = Visibility.Visible;
+                liveBadge.Visibility = Visibility.Collapsed;
+                previewPill.Visibility = Visibility.Collapsed;
+            }
+        }
+
+        void StopPreview()
+        {
+            try { if (previewMp != null) previewMp.Stop(); } catch { }
+            liveBadge.Visibility = Visibility.Collapsed;
+            previewPill.Visibility = Visibility.Collapsed;
+            previewHint.Text = Lang.T("Haz clic en un canal para ver la vista previa");
+            previewHint.Visibility = Visibility.Visible;
+        }
+
+        void OpenFull()
+        {
+            if ((DateTime.Now - lastFullOpen).TotalMilliseconds < 800) return;
+            lastFullOpen = DateTime.Now;
+            var c = selectedChannel;
+            if (c == null || string.IsNullOrEmpty(c.StreamUrl)) return;
+            StopPreview(); // que no siga sonando en el fondo
+            PlayerView.Open(c.Name, c.Group, true, c.StreamUrl, c.Logo);
         }
 
         string[] Cats()
@@ -205,8 +642,20 @@ namespace MiTV
                 .Distinct().OrderBy(g => g)).ToArray();
         }
 
+        // Restaura la posición de scroll guardada por el refresco periódico,
+        // solo cuando el dibujo terminó (si se restaura antes, el ScrollViewer
+        // recorta el desplazamiento porque el contenido aún está incompleto).
+        void RestoreScrollIfPending()
+        {
+            if (pendingScrollRestore < 0 || listScroll == null) return;
+            double o = pendingScrollRestore;
+            pendingScrollRestore = -1;
+            try { listScroll.ScrollToVerticalOffset(o); } catch { }
+        }
+
         void RenderCats(string sel)
         {
+            pendingScrollRestore = -1; // navegar de categoría manda: el scroll vuelve arriba
             catsPanel.Children.Clear();
             int hn = WatchHistory.LastOpened(15, e => e.Kind == "channel").Count;
             catsPanel.Children.Add(Ui.CatButton(Lang.T("\U0001F558 Historial"), hn, sel == "Historial",
@@ -227,6 +676,7 @@ namespace MiTV
         void RenderList(string cat)
         {
             curCat = cat;
+            selectedRow = null;
             int token = ++renderToken;
             list.Children.Clear();
             bool searching = !string.IsNullOrEmpty(searchQ);
@@ -238,13 +688,24 @@ namespace MiTV
                 foreach (var e in hist)
                 {
                     var ee = e;
-                    var hrow = new Channel(ee.Title, string.IsNullOrEmpty(ee.Sub) ? Lang.T("En vivo") : ee.Sub, "\U0001F4FA", 0)
+                    var ch = new LiveChannel { Name = ee.Title, Group = ee.Sub, Logo = ee.Logo, StreamUrl = ee.Key };
+                    var (prog, pct, range) = NowInfo(ch);
+                    var hrow = new Channel(ee.Title, prog, "\U0001F4FA", pct)
                     {
-                        Logo = ee.Logo
+                        Logo = ee.Logo,
+                        TimeRange = range
                     };
-                    list.Children.Add(Ui.ChannelRow(hrow,
-                        () => PlayerView.Open(ee.Title, ee.Sub, true, ee.Key, ee.Logo)));
+                    Border hrowB = null;
+                    hrowB = Ui.ChannelRow(hrow,
+                        () => SelectChannel(ch, 0, hrowB),
+                        null, null,
+                        isSelected: () => selectedUrl == ee.Key,
+                        onOpen: OpenFull);
+                    if (ee.Key == selectedUrl) selectedRow = hrowB;
+                    hrowB.MouseLeftButtonDown += (s, e2) => { if (e2.ClickCount == 2) OpenFull(); };
+                    list.Children.Add(hrowB);
                 }
+                RestoreScrollIfPending();
                 return;
             }
             if (ContentStore.Channels.Count == 0)
@@ -256,6 +717,7 @@ namespace MiTV
                     if (searching && !Ui.Norm(c.Name).Contains(searchQ)) continue;
                     list.Children.Add(Ui.ChannelRow(c, () => PlayerView.Open(c.Name, c.Programme, true)));
                 }
+                RestoreScrollIfPending();
                 return;
             }
             // La búsqueda cubre toda la sección, no solo la categoría abierta
@@ -279,10 +741,19 @@ namespace MiTV
             Func<LiveChannel, Border> makeRow = (LiveChannel c) =>
             {
                 var cc = c;
-                var row = new Channel(c.Name, string.IsNullOrEmpty(c.Group) ? Lang.T("En vivo") : c.Group, "\U0001F4FA", 0) { Logo = c.Logo, Number = ++rowNum, Tag = c.HasCatchup ? "catchup" : "" };
-                return Ui.ChannelRow(row,
-                    () => PlayerView.Open(c.Name, c.Group, true, c.StreamUrl, c.Logo),
-                    () => (Favorites.IsFav(cc), new Action(() => { Favorites.Toggle(cc); })));
+                int num = ++rowNum;
+                var (prog, pct, range) = NowInfo(cc);
+                var row = new Channel(cc.Name, prog, "\U0001F4FA", pct) { Logo = cc.Logo, Number = num, Tag = cc.HasCatchup ? "catchup" : "", TimeRange = range };
+                Border rowB = null;
+                rowB = Ui.ChannelRow(row,
+                    () => SelectChannel(cc, num, rowB),
+                    () => (Favorites.IsFav(cc), new Action(() => { Favorites.Toggle(cc); })),
+                    () => CardMenus.ChannelMenu(cc.StreamUrl, () => RenderList(curCat)),
+                    isSelected: () => selectedUrl == cc.StreamUrl,
+                    onOpen: OpenFull);
+                if (cc.StreamUrl == selectedUrl) selectedRow = rowB;
+                rowB.MouseLeftButtonDown += (s, e) => { if (e.ClickCount == 2) OpenFull(); };
+                return rowB;
             };
             if (favItems.Count > 0)
             {
@@ -297,6 +768,7 @@ namespace MiTV
                     list.Children.Add(Ui.GroupHeader(g.Key));
                     foreach (var c in g) list.Children.Add(makeRow(c));
                 }
+                RestoreScrollIfPending();
             }
             else
             {
@@ -310,6 +782,8 @@ namespace MiTV
                     for (; i < end; i++) list.Children.Add(makeRow(flat[i]));
                     if (i < flat.Count)
                         Dispatcher.BeginInvoke(addChunk, DispatcherPriority.Background);
+                    else
+                        RestoreScrollIfPending();
                 };
                 addChunk();
             }
@@ -350,7 +824,7 @@ namespace MiTV
             root.Children.Add(grid);
             Content = root;
             string startCat = ViewState.Get("sports");
-            if (startCat != "Historial" && Array.IndexOf(Cats(), startCat) < 0) startCat = "Todo";
+            if (startCat != "Historial" && startCat != "Favoritos" && Array.IndexOf(Cats(), startCat) < 0) startCat = "Todo";
             RenderCats(startCat);
             RenderList(startCat);
         }
@@ -434,7 +908,9 @@ namespace MiTV
                         Number = ++sNum
                     };
                     list.Children.Add(Ui.ChannelRow(row,
-                        () => PlayerView.Open(c.Name, c.Group, true, c.StreamUrl, c.Logo)));
+                        () => PlayerView.Open(c.Name, c.Group, true, c.StreamUrl, c.Logo),
+                        () => (Favorites.IsFav(c), new Action(() => { Favorites.Toggle(c); })),
+                        () => CardMenus.ChannelMenu(c.StreamUrl, () => RenderList(curCat))));
                 }
             }
             else
@@ -719,7 +1195,7 @@ namespace MiTV
 
             Content = root;
             string startCat = ViewState.Get("movies");
-            if (startCat != "Historial" && Array.IndexOf(Cats(), startCat) < 0) startCat = "Todo";
+            if (startCat != "Historial" && startCat != "Favoritos" && Array.IndexOf(Cats(), startCat) < 0) startCat = "Todo";
             RenderCats(startCat);
             RenderMovies(startCat);
         }
@@ -987,7 +1463,9 @@ namespace MiTV
                     var ee = e;
                     int pct = ee.DurationMs > 0 ? (int)(ee.PositionMs * 100 / ee.DurationMs) : 0;
                     var hcard = Ui.Card(ee.Title, ee.Sub, "\U0001F3AC", null, pct,
-                        () => MovieDetailView.OpenMovieByKey(ee.Key), ee.Logo);
+                        () => MovieDetailView.OpenMovieByKey(ee.Key), ee.Logo,
+                        fav: () => (Favorites.IsFavKey(ee.Key), () => { Favorites.ToggleKey(ee.Key); RenderMovies(curCat); }),
+                        menu: () => CardMenus.MovieMenu(ee.Title, ee.Sub, ee.Key, ee.Logo, () => RenderMovies(curCat)));
                     hcard.Margin = new Thickness(0, 0, 14, 14);
                     grid.Children.Add(hcard);
                 }
@@ -1041,7 +1519,9 @@ namespace MiTV
             Func<VodMovie, Border> makeCard = (VodMovie mm) =>
             {
                 string badge = (VodSettings.MarkWatched && WatchHistory.IsWatched(mm.StreamUrl)) ? "\u2713" : null;
-                var card = Ui.Card(mm.Name, mm.Category, "🎬", badge, -1, () => Nav.Push(new MovieDetailView(mm)), mm.Logo);
+                var card = Ui.Card(mm.Name, mm.Category, "🎬", badge, -1, () => Nav.Push(new MovieDetailView(mm)), mm.Logo,
+                    fav: () => (Favorites.IsFavKey(mm.StreamUrl), () => { Favorites.ToggleKey(mm.StreamUrl); RenderMovies(curCat); }),
+                    menu: () => CardMenus.MovieMenu(mm.Name, mm.Category, mm.StreamUrl, mm.Logo, () => RenderMovies(curCat)));
                 card.Margin = new Thickness(0, 0, 14, 14);
                 return card;
             };
@@ -1102,7 +1582,7 @@ namespace MiTV
             root.Children.Add(outer);
             Content = root;
             string startCat = ViewState.Get("series");
-            if (startCat != "Historial" && Array.IndexOf(Cats(), startCat) < 0) startCat = "Todo";
+            if (startCat != "Historial" && startCat != "Favoritos" && Array.IndexOf(Cats(), startCat) < 0) startCat = "Todo";
             RenderCats(startCat);
             RenderShows(startCat);
         }
@@ -1188,7 +1668,9 @@ namespace MiTV
                 for (; shown < end; shown++)
                 {
                     var ss = items[shown];
-                    var card = Ui.Card(ss.Name, ss.Category, "🎭", null, -1, () => HomeView.OpenSerie(ss), ss.Cover);
+                    var card = Ui.Card(ss.Name, ss.Category, "🎭", null, -1, () => HomeView.OpenSerie(ss), ss.Cover,
+                        fav: () => (Favorites.IsFavKey("serie:" + (ss.SerieId ?? ss.Name)), () => { Favorites.ToggleKey("serie:" + (ss.SerieId ?? ss.Name)); RenderShows(curCat); }),
+                        menu: () => CardMenus.SerieMenu(ss, () => RenderShows(curCat)));
                     card.Margin = new Thickness(0, 0, 14, 14);
                     grid.Children.Add(card);
                 }

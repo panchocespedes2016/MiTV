@@ -249,7 +249,7 @@ namespace MiTV
         }
 
         // Tarjeta clicable (película, serie, canal destacado)
-        public static Border Card(string title, string sub, string icon, string badge, int progress, Action onClick, string imageUrl = null, bool whiteBorder = false)
+        public static Border Card(string title, string sub, string icon, string badge, int progress, Action onClick, string imageUrl = null, bool whiteBorder = false, Func<(bool isFav, Action toggle)> fav = null, Func<ContextMenu> menu = null)
         {
             var b = new Border
             {
@@ -295,6 +295,39 @@ namespace MiTV
                     Child = new TextBlock { Text = badge, FontSize = 10, FontWeight = FontWeights.Bold, Foreground = Brushes.White }
                 });
             }
+            // Estrella de favorito (mismo patrón que en las filas de TV): solo
+            // visible si es favorito; se pulsa directo para quitarlo y se
+            // actualiza en su sitio sin abrir la ficha.
+            if (fav != null)
+            {
+                var (isFav0, toggle0) = fav();
+                var starTxt = new TextBlock
+                {
+                    Text = "\u2605", FontSize = 15, Foreground = B("#FFD500"),
+                    HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center,
+                    ToolTip = "Quitar de favoritos"
+                };
+                var starBox = new Border
+                {
+                    Background = new SolidColorBrush(Color.FromArgb(178, 5, 8, 10)),
+                    CornerRadius = new CornerRadius(13), Width = 26, Height = 26,
+                    HorizontalAlignment = HorizontalAlignment.Right, VerticalAlignment = VerticalAlignment.Top,
+                    Margin = new Thickness(0, 6, 6, 0), Child = starTxt,
+                    Focusable = true, Cursor = Cursors.Hand,
+                    Visibility = isFav0 ? Visibility.Visible : Visibility.Collapsed
+                };
+                Action doToggle = () =>
+                {
+                    toggle0?.Invoke();
+                    bool nf = false;
+                    try { nf = fav().isFav; } catch { }
+                    starBox.Visibility = nf ? Visibility.Visible : Visibility.Collapsed;
+                };
+                starBox.MouseLeftButtonUp += (s, e) => { e.Handled = true; doToggle(); };
+                starBox.TouchDown += (s, e) => { e.Handled = true; doToggle(); };
+                starBox.KeyDown += (s, e) => { if (e.Key == System.Windows.Input.Key.Enter || e.Key == System.Windows.Input.Key.Space) { e.Handled = true; doToggle(); } };
+                tg.Children.Add(starBox);
+            }
             thumb.Child = tg;
             sp.Children.Add(thumb);
             if (!string.IsNullOrEmpty(imageUrl))
@@ -309,6 +342,16 @@ namespace MiTV
             if (progress >= 0) sp.Children.Add(Progress(progress, new Thickness(0, 10, 0, 0)));
             b.Child = sp;
             b.MouseLeftButtonUp += (s, e) => onClick?.Invoke();
+            // Menú de clic derecho (se arma en el momento, con el estado actual)
+            if (menu != null)
+                b.MouseRightButtonDown += (s, e) =>
+                {
+                    var cm = menu();
+                    if (cm == null) return;
+                    cm.PlacementTarget = b;
+                    cm.IsOpen = true;
+                    e.Handled = true;
+                };
             b.MouseEnter += (s, e) => b.BorderBrush = Red;
             b.MouseLeave += (s, e) => { if (!b.IsFocused) b.BorderBrush = Brd; };
             // Navegación con teclado/control remoto
@@ -339,12 +382,13 @@ namespace MiTV
         }
 
         // Fila de canal (lista)
-        public static Border ChannelRow(Channel c, Action onClick, Func<(bool isFav, Action toggle)> fav = null)
+        public static Border ChannelRow(Channel c, Action onClick, Func<(bool isFav, Action toggle)> fav = null, Func<ContextMenu> menu = null, Func<bool> isSelected = null, Action onOpen = null)
         {
+            bool sel = isSelected?.Invoke() == true;
             var b = new Border
             {
                 Background = Panel,
-                BorderBrush = Brd,
+                BorderBrush = sel ? Red : Brd,
                 BorderThickness = new Thickness(1),
                 CornerRadius = new CornerRadius(10),
                 Padding = new Thickness(16, 12, 16, 12),
@@ -408,13 +452,19 @@ namespace MiTV
                 ImgCache.Load(ic, emoji, c.Logo, 88);
             DockPanel.SetDock(ic, Dock.Left);
             dock.Children.Add(ic);
-            var right = new StackPanel { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center };
+            var right = new StackPanel { VerticalAlignment = VerticalAlignment.Center };
             DockPanel.SetDock(right, Dock.Right);
+            var barRow = new StackPanel { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center };
+            double pct = Math.Max(0, Math.Min(100, c.Progress));
             var bar = new Grid { Width = 150, Height = 5, Margin = new Thickness(0, 0, 14, 0), VerticalAlignment = VerticalAlignment.Center };
             bar.Children.Add(new Border { Background = BarBg, CornerRadius = new CornerRadius(3) });
-            bar.Children.Add(new Border { Background = Blue, CornerRadius = new CornerRadius(3), HorizontalAlignment = HorizontalAlignment.Left, Width = 150 * c.Progress / 100.0 });
-            right.Children.Add(bar);
-            right.Children.Add(new TextBlock { Text = c.Progress + "%", FontSize = 12, Foreground = Gray, VerticalAlignment = VerticalAlignment.Center });
+            bar.Children.Add(new Border { Background = Blue, CornerRadius = new CornerRadius(3), HorizontalAlignment = HorizontalAlignment.Left, Width = 150 * pct / 100.0 });
+            barRow.Children.Add(bar);
+            var pctTb = new TextBlock { Text = c.Progress + "%", FontSize = 12, Foreground = Gray, VerticalAlignment = VerticalAlignment.Center, Visibility = c.Progress > 0 ? Visibility.Visible : Visibility.Collapsed };
+            barRow.Children.Add(pctTb);
+            right.Children.Add(barRow);
+            if (!string.IsNullOrEmpty(c.TimeRange))
+                right.Children.Add(new TextBlock { Text = c.TimeRange, FontSize = 11, Foreground = Gray, HorizontalAlignment = HorizontalAlignment.Right, Margin = new Thickness(0, 3, 0, 0) });
             dock.Children.Add(right);
             var tx = new StackPanel { VerticalAlignment = VerticalAlignment.Center };
             var nameGrid = new Grid();
@@ -438,15 +488,27 @@ namespace MiTV
             dock.Children.Add(tx);
             b.Child = dock;
             b.MouseLeftButtonUp += (s, e) => onClick?.Invoke();
+            // Menú de clic derecho (se arma en el momento, con el estado actual)
+            if (menu != null)
+                b.MouseRightButtonDown += (s, e) =>
+                {
+                    var cm = menu();
+                    if (cm == null) return;
+                    cm.PlacementTarget = b;
+                    cm.IsOpen = true;
+                    e.Handled = true;
+                };
             b.MouseEnter += (s, e) => b.BorderBrush = Red;
-            b.MouseLeave += (s, e) => { if (!b.IsFocused) b.BorderBrush = Brd; };
+            b.MouseLeave += (s, e) => { if (!b.IsFocused && isSelected?.Invoke() != true) b.BorderBrush = Brd; };
             // Navegación con teclado/control remoto
             b.Focusable = true;
             b.GotFocus += (s, e) => b.BorderBrush = Red;
-            b.LostFocus += (s, e) => b.BorderBrush = Brd;
+            b.LostFocus += (s, e) => { if (isSelected?.Invoke() != true) b.BorderBrush = Brd; };
             b.KeyDown += (s, e) =>
             {
-                if (e.Key == System.Windows.Input.Key.Enter || e.Key == System.Windows.Input.Key.Space)
+                if (e.Key == System.Windows.Input.Key.Enter)
+                { e.Handled = true; (onOpen ?? onClick)?.Invoke(); }
+                else if (e.Key == System.Windows.Input.Key.Space)
                 { e.Handled = true; onClick?.Invoke(); }
             };
             return b;

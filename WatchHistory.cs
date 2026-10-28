@@ -17,6 +17,7 @@ namespace MiTV
         public long PositionMs { get; set; }
         public long DurationMs { get; set; }
         public int Plays { get; set; }              // veces que lo abrió
+        public bool Watched { get; set; }           // marcado como visto a mano (sin reproducir)
         public DateTime UpdatedUtc { get; set; }
     }
 
@@ -92,8 +93,28 @@ namespace MiTV
             if (durMs <= 0) return;
             e.PositionMs = Math.Max(0, posMs);
             e.DurationMs = durMs;
+            e.Watched = e.PositionMs >= e.DurationMs * 0.95;
             e.UpdatedUtc = DateTime.UtcNow;
             Save();
+        }
+
+        // Marcar como visto sin reproducir (menú de la tarjeta). No toca
+        // UpdatedUtc para no meterlo en el historial de "últimos abiertos".
+        public static void SetWatched(string key, string title, string sub, string logo, string kind, string category)
+        {
+            if (string.IsNullOrEmpty(key)) return;
+            if (!map.TryGetValue(key, out var e))
+            {
+                e = new WatchEntry { Key = key, UpdatedUtc = DateTime.MinValue };
+                map[key] = e;
+            }
+            e.Title = title ?? "";
+            e.Sub = sub ?? "";
+            e.Logo = logo ?? "";
+            e.Kind = kind ?? "";
+            if (!string.IsNullOrEmpty(category)) e.Category = category;
+            e.Watched = true;
+            SaveNow();
         }
 
         public static long ResumePosition(string key)
@@ -120,8 +141,11 @@ namespace MiTV
         // Películas incompletas, las más recientes primero
         public static bool IsWatched(string key)
         {
-            if (map.TryGetValue(key ?? "", out var e) && e.DurationMs > 0)
-                return e.PositionMs >= e.DurationMs * 0.95;
+            if (map.TryGetValue(key ?? "", out var e))
+            {
+                if (e.Watched) return true;
+                if (e.DurationMs > 0) return e.PositionMs >= e.DurationMs * 0.95;
+            }
             return false;
         }
 

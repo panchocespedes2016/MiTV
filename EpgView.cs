@@ -108,7 +108,7 @@ namespace MiTV
             nowTimer.Start();
 
             string startCat = ViewState.Get("epg");
-            if (Array.IndexOf(Cats(), startCat) < 0) startCat = "Todo";
+            if (startCat != "Favoritos" && Array.IndexOf(Cats(), startCat) < 0) startCat = "Todo";
             RenderCats(startCat);
             RenderGrid(startCat);
         }
