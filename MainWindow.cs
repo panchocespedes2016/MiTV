@@ -1,4 +1,6 @@
 using System;
+using System.Collections.Generic;
+using System.Text;
 using System.IO;
 using System.Text.Json;
 using System.Windows;
@@ -110,10 +112,30 @@ namespace MiTV
                 int dark = 1;
                 if (DwmSetWindowAttribute(hwnd, 20, ref dark, sizeof(int)) != 0)
                     DwmSetWindowAttribute(hwnd, 19, ref dark, sizeof(int));
-                HwndSource.FromHwnd(hwnd)?.AddHook(WndProcWorkArea);
+                HwndSource.FromHwnd(hwnd)?.AddHook(_workAreaHook);
+                InstallSubclass(hwnd);
+                // Reafirmar la subclase cada segundo: VLC puede reinstalar
+                // su procedimiento sobre la ventana del video y dejarnos
+                // fuera sin crear ventana nueva. La guardia de ForwardProc
+                // impide el ciclo de reenvío que tumbó el intento anterior.
+                _rescanTimer = new DispatcherTimer(TimeSpan.FromSeconds(1), DispatcherPriority.Background, (s, ev) => { try { SubclassVideoChildren(); } catch { } }, Dispatcher.CurrentDispatcher);
+                _rescanTimer.Start();
             }
             catch { }
         }
+
+        protected override void OnClosed(EventArgs e)
+        {
+            try { _rescanTimer?.Stop(); } catch { }
+            RemoveSubclass();
+            base.OnClosed(e);
+        }
+
+        private DispatcherTimer _rescanTimer;
+
+        // Referencia fuerte al delegado del hook: HwndSource guarda los
+        // hooks con referencia débil y el GC puede recolectarlos.
+        private static readonly HwndSourceHook _workAreaHook = WndProcWorkArea;
 
         // En modo fullscreen del reproductor, maximizar debe cubrir el monitor
         // completo (incluida la barra de tareas); si no, solo el área de trabajo.
@@ -122,6 +144,8 @@ namespace MiTV
         // Al maximizar, limitar la ventana al área de trabajo del monitor: con el
         // marco propio de la app, Windows maximiza a pantalla completa y tapa la
         // barra de tareas; WM_GETMINMAXINFO permite corregir tamaño y posición.
+        // El agarre de los bordes (WM_NCHITTEST) ya no vive aquí: el hook de
+        // HwndSource no llegaba a responderlo y lo atiende la subclase nativa.
         private static IntPtr WndProcWorkArea(IntPtr hwnd, int msg, IntPtr wParam, IntPtr lParam, ref bool handled)
         {
             const int WM_GETMINMAXINFO = 0x0024;
@@ -156,6 +180,339 @@ namespace MiTV
         [StructLayout(LayoutKind.Sequential)] private struct MONITORINFO { public int cbSize; public RECTL rcMonitor, rcWork; public int dwFlags; }
         [DllImport("user32.dll")] private static extern IntPtr MonitorFromWindow(IntPtr hwnd, int dwFlags);
         [DllImport("user32.dll")] private static extern bool GetMonitorInfo(IntPtr hMonitor, ref MONITORINFO lpmi);
+        [DllImport("user32.dll")] private static extern bool GetWindowRect(IntPtr hWnd, out RECTL lpRect);
+        [DllImport("user32.dll")] private static extern bool IsZoomed(IntPtr hWnd);
+        [DllImport("user32.dll")] private static extern int GetDpiForWindow(IntPtr hwnd);
+
+        // 8 px independientes del dispositivo, en píxeles físicos
+        static int GripPx(IntPtr hwnd)
+        {
+            try
+            {
+                int dpi = GetDpiForWindow(hwnd);
+                if (dpi > 0) return Math.Max(4, (int)Math.Round(8.0 * dpi / 96.0));
+            }
+            catch { }
+            return 8;
+        }
+
+        // Código HT de la franja de agarre (0 = fuera de la franja),
+        // calculado desde el rectángulo real de la ventana.
+        static int HitTestBorder(IntPtr hwnd, IntPtr lParam)
+        {
+            try
+            {
+                if (GetWindowRect(hwnd, out RECTL rc))
+                {
+                    long v = lParam.ToInt64();
+                    int x = (short)(v & 0xFFFF);
+                    int y = (short)((v >> 16) & 0xFFFF);
+                    int grip = GripPx(hwnd);
+                    bool left = x - rc.left < grip;
+                    bool right = rc.right - x < grip;
+                    bool top = y - rc.top < grip;
+                    bool bottom = rc.bottom - y < grip;
+                    if (top && left) return 13;         // HTTOPLEFT
+                    if (top && right) return 14;        // HTTOPRIGHT
+                    if (bottom && left) return 16;      // HTBOTTOMLEFT
+                    if (bottom && right) return 17;     // HTBOTTOMRIGHT
+                    if (left) return 10;                // HTLEFT
+                    if (right) return 11;               // HTRIGHT
+                    if (top) return 12;                 // HTTOP
+                    if (bottom) return 15;              // HTBOTTOM
+                }
+            }
+            catch { }
+            return 0;
+        }
+
+        // Subclase nativa del procedimiento de ventana: responde WM_NCHITTEST
+        // ANTES que el procedimiento de WPF y que el manejador del
+        // WindowChrome (que contestaba primero y solo devolvía el agarre
+        // arriba). El resto de mensajes sigue al procedimiento original.
+        // Los delegados quedan en campos estáticos: si el GC los recolecta,
+        // Windows llamaría a código muerto y la ventana se rompería.
+        private delegate IntPtr SubclassWndProc(IntPtr hWnd, uint msg, IntPtr wParam, IntPtr lParam);
+        private static SubclassWndProc _subclassDel;
+        private static IntPtr _oldWndProc = IntPtr.Zero;
+        private static IntPtr _subclassHwnd = IntPtr.Zero;
+        private const int GWLP_WNDPROC = -4;
+
+        [DllImport("user32.dll", EntryPoint = "SetWindowLongPtr")]
+        private static extern IntPtr SetWindowLongPtr64(IntPtr hWnd, int nIndex, IntPtr dwNewLong);
+        [DllImport("user32.dll", EntryPoint = "GetWindowLongPtr")]
+        private static extern IntPtr GetWindowLongPtr64(IntPtr hWnd, int nIndex);
+        [DllImport("user32.dll")]
+        private static extern IntPtr CallWindowProc(IntPtr lpPrevWndFunc, IntPtr hWnd, uint msg, IntPtr wParam, IntPtr lParam);
+        [DllImport("user32.dll")]
+        private static extern IntPtr DefWindowProc(IntPtr hWnd, uint msg, IntPtr wParam, IntPtr lParam);
+
+        // Reenvío con guardia contra ciclos: si el procedimiento al que
+        // reenviamos vuelve a entrar al nuestro con la misma ventana y el
+        // mismo mensaje (otro componente nos capturó como su "anterior"),
+        // contestar con el procedimiento por defecto en vez de reenviar
+        // otra vez. Sin esto, la recursión desborda la pila y la app muere.
+        [ThreadStatic] private static HashSet<(IntPtr hWnd, uint msg)> _procGuard;
+        private static IntPtr ForwardProc(IntPtr oldProc, IntPtr hWnd, uint msg, IntPtr wParam, IntPtr lParam)
+        {
+            if (_procGuard == null) _procGuard = new HashSet<(IntPtr, uint)>();
+            if (!_procGuard.Add((hWnd, msg))) return DefWindowProc(hWnd, msg, wParam, lParam);
+            try { return CallWindowProc(oldProc, hWnd, msg, wParam, lParam); }
+            finally { _procGuard.Remove((hWnd, msg)); }
+        }
+
+        private static void InstallSubclass(IntPtr hwnd)
+        {
+            if (_oldWndProc != IntPtr.Zero) return;
+            _myPid = Process.GetCurrentProcess().Id;
+            _subclassDel = SubclassProc;
+            IntPtr fn = Marshal.GetFunctionPointerForDelegate(_subclassDel);
+            IntPtr old = SetWindowLongPtr64(hwnd, GWLP_WNDPROC, fn);
+            try { System.IO.File.Delete(System.IO.Path.Combine(System.AppContext.BaseDirectory, "mitv-resize-diag.txt")); _diagCount = 0; } catch { }
+            Diag("MAIN subclass hwnd=" + hwnd + " old=" + old + " pid=" + _myPid);
+            if (old != IntPtr.Zero) { _oldWndProc = old; _subclassHwnd = hwnd; SubclassVideoChildren(); }
+        }
+
+        // Diagnóstico temporal del agarre (borrar tras verificar): escribe
+        // en mitv-resize-diag.txt junto al exe, con tope de líneas.
+        private static int _diagCount;
+        private static int _diagChildHit;
+        private static int _diagChildPN;
+        private static int _diagMainHit;
+        private static int _diagVlcHit;
+        private static readonly HashSet<IntPtr> _vlcWindows = new HashSet<IntPtr>();
+        private static void Diag(string line)
+        {
+            try
+            {
+                if (_diagCount >= 300) return;
+                _diagCount++;
+                string path = System.IO.Path.Combine(System.AppContext.BaseDirectory, "mitv-resize-diag.txt");
+                System.IO.File.AppendAllText(path, DateTime.Now.ToString("HH:mm:ss.fff") + " " + line + "\r\n");
+            }
+            catch { }
+        }
+
+        private static string WinClass(IntPtr hWnd)
+        {
+            try { var sb = new StringBuilder(256); GetClassName(hWnd, sb, 256); return sb.ToString(); }
+            catch { return "?"; }
+        }
+
+        private static void RemoveSubclass()
+        {
+            try
+            {
+                if (_oldWndProc != IntPtr.Zero && _subclassHwnd != IntPtr.Zero)
+                    SetWindowLongPtr64(_subclassHwnd, GWLP_WNDPROC, _oldWndProc);
+            }
+            catch { }
+            _oldWndProc = IntPtr.Zero;
+            _subclassHwnd = IntPtr.Zero;
+            // Restaurar también las ventanas hijas de video subclasadas.
+            try
+            {
+                lock (_childLock)
+                {
+                    foreach (var kv in _childOldProcs)
+                        SetWindowLongPtr64(kv.Key, GWLP_WNDPROC, kv.Value);
+                    _childOldProcs.Clear();
+                }
+            }
+            catch { }
+        }
+
+        private static IntPtr SubclassProc(IntPtr hWnd, uint msg, IntPtr wParam, IntPtr lParam)
+        {
+            const uint WM_NCDESTROY = 0x0082;
+            const uint WM_NCHITTEST = 0x0084;
+            try
+            {
+                if (msg == WM_NCDESTROY)
+                {
+                    // Último mensaje de la ventana: restaurar el procedimiento
+                    // original antes de reenviar.
+                    IntPtr old = _oldWndProc;
+                    _oldWndProc = IntPtr.Zero;
+                    _subclassHwnd = IntPtr.Zero;
+                    if (old != IntPtr.Zero)
+                    {
+                        SetWindowLongPtr64(hWnd, GWLP_WNDPROC, old);
+                        return ForwardProc(old, hWnd, msg, wParam, lParam);
+                    }
+                    return DefWindowProc(hWnd, msg, wParam, lParam);
+                }
+                // Un hijo nuevo (el video) o un cambio de posición: buscar
+                // ventanas hijas de video para subclasarlas.
+                const uint WM_PARENTNOTIFY = 0x0210;
+                const uint WM_WINDOWPOSCHANGED = 0x0047;
+                if ((msg == WM_PARENTNOTIFY && (wParam.ToInt64() & 0xFFFF) == 1) || msg == WM_WINDOWPOSCHANGED)
+                    SubclassVideoChildren();
+                // Agarre de 8 px en los 4 bordes y las 4 esquinas. Solo se
+                // contesta dentro de la franja: el resto sigue su manejo
+                // normal (título, botones, contenido). Sin agarre si está
+                // maximizada o en fullscreen del reproductor.
+                if (msg == WM_NCHITTEST && !FullscreenMax && !IsZoomed(hWnd))
+                {
+                    int ht = HitTestBorder(hWnd, lParam);
+                    if (_diagMainHit < 10) { _diagMainHit++; Diag("MAIN HT ht=" + ht); }
+                    if (ht != 0) return (IntPtr)ht;
+                }
+            }
+            catch { }
+            IntPtr prev = _oldWndProc;
+            return prev != IntPtr.Zero
+                ? ForwardProc(prev, hWnd, msg, wParam, lParam)
+                : DefWindowProc(hWnd, msg, wParam, lParam);
+        }
+
+        // Ventanas hijas de video (el VideoView de LibVLC pinta en un HWND
+        // hijo que se come el hit-test de los bordes cuando el video está
+        // corriendo). Se subclasa TODA ventana del propio proceso (hijas,
+        // nietas y superiores) sin filtros de tamaño ni visibilidad: el
+        // hijo del video puede crearse sin tamaño y luego agrandarse, y
+        // VLC puede anidar su propia ventana dentro de la del host. En
+        // la franja de agarre devuelve el código HT de la ventana
+        // principal; el resto sigue a su procedimiento original.
+        // Referencias fuertes en campos estáticos.
+        private static SubclassWndProc _childSubclassDel;
+        private static readonly Dictionary<IntPtr, IntPtr> _childOldProcs = new Dictionary<IntPtr, IntPtr>();
+        private static readonly object _childLock = new object();
+        private static int _myPid;
+        private delegate bool EnumChildProc(IntPtr hWnd, IntPtr lParam);
+        private delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lParam);
+        private static EnumChildProc _enumChildDel;
+        private static EnumWindowsProc _enumWindowsDel;
+
+        [DllImport("user32.dll")]
+        private static extern bool EnumChildWindows(IntPtr hWndParent, EnumChildProc lpEnumFunc, IntPtr lParam);
+        [DllImport("user32.dll")]
+        private static extern bool EnumWindows(EnumWindowsProc lpEnumFunc, IntPtr lParam);
+        [DllImport("user32.dll", CharSet = CharSet.Auto)]
+        private static extern int GetClassName(IntPtr hWnd, StringBuilder lpClassName, int nMaxCount);
+        [DllImport("user32.dll")]
+        private static extern bool IsWindowVisible(IntPtr hWnd);
+
+        private static void SubclassVideoChildren()
+        {
+            IntPtr main = _subclassHwnd;
+            if (main == IntPtr.Zero) return;
+            try
+            {
+                _enumChildDel = EnumChildCallback;
+                EnumChildWindows(main, _enumChildDel, IntPtr.Zero);
+                _enumWindowsDel = EnumTopCallback;
+                EnumWindows(_enumWindowsDel, IntPtr.Zero);
+            }
+            catch { }
+        }
+
+        private static bool EnumChildCallback(IntPtr hWnd, IntPtr lParam)
+        {
+            try { SubclassOne(hWnd); } catch { }
+            return true;
+        }
+
+        private static bool EnumTopCallback(IntPtr hWnd, IntPtr lParam)
+        {
+            try
+            {
+                uint pid = 0;
+                GetWindowThreadProcessId(hWnd, out pid);
+                if (pid == (uint)_myPid && hWnd != _subclassHwnd) SubclassOne(hWnd);
+            }
+            catch { }
+            return true;
+        }
+
+        private static void SubclassOne(IntPtr hWnd)
+        {
+            if (hWnd == IntPtr.Zero || hWnd == _subclassHwnd) return;
+            try
+            {
+                if (_childSubclassDel == null) _childSubclassDel = ChildSubclassProc;
+                IntPtr mine = Marshal.GetFunctionPointerForDelegate(_childSubclassDel);
+                // Verificar: VLC puede reinstalar su propio procedimiento
+                // después de nosotros y dejarnos fuera; si el actual ya no
+                // es el nuestro, reinstalar encima. La guardia de
+                // ForwardProc impide el ciclo de reenvío que tumbó la
+                // versión anterior.
+                IntPtr cur = GetWindowLongPtr64(hWnd, GWLP_WNDPROC);
+                if (cur == mine) return;
+                bool re;
+                lock (_childLock) { re = _childOldProcs.ContainsKey(hWnd); }
+                IntPtr old = SetWindowLongPtr64(hWnd, GWLP_WNDPROC, mine);
+                if (old != IntPtr.Zero)
+                {
+                    lock (_childLock) { _childOldProcs[hWnd] = old; }
+                    string cls = WinClass(hWnd);
+                    if (cls.StartsWith("VLC")) { lock (_childLock) { _vlcWindows.Add(hWnd); } }
+                    Diag((re ? "RE-SUB " : "SUB ") + "hwnd=" + hWnd + " class=" + cls + " old=" + old + " cur=" + cur);
+                    // Recursión: los nietos también (VLC anida su ventana).
+                    _enumChildDel = EnumChildCallback;
+                    EnumChildWindows(hWnd, _enumChildDel, IntPtr.Zero);
+                }
+                else Diag("SUB-FAILED hwnd=" + hWnd + " class=" + WinClass(hWnd));
+            }
+            catch { }
+        }
+
+        private static IntPtr ChildSubclassProc(IntPtr hWnd, uint msg, IntPtr wParam, IntPtr lParam)
+        {
+            const uint WM_NCDESTROY = 0x0082;
+            const uint WM_NCHITTEST = 0x0084;
+            const uint WM_PARENTNOTIFY = 0x0210;
+            try
+            {
+                if (msg == WM_NCDESTROY)
+                {
+                    IntPtr old = IntPtr.Zero;
+                    lock (_childLock)
+                    {
+                        if (_childOldProcs.TryGetValue(hWnd, out old)) _childOldProcs.Remove(hWnd);
+                        _vlcWindows.Remove(hWnd);
+                    }
+                    if (old != IntPtr.Zero)
+                    {
+                        SetWindowLongPtr64(hWnd, GWLP_WNDPROC, old);
+                        return ForwardProc(old, hWnd, msg, wParam, lParam);
+                    }
+                    return DefWindowProc(hWnd, msg, wParam, lParam);
+                }
+                // Un descendiente nuevo (VLC crea su ventana al arrancar el
+                // video): re-escanear el árbol.
+                if (msg == WM_PARENTNOTIFY && (wParam.ToInt64() & 0xFFFF) == 1)
+                {
+                    if (_diagChildPN < 10) { _diagChildPN++; Diag("CHILD PARENTNOTIFY hwnd=" + hWnd + " class=" + WinClass(hWnd)); }
+                    SubclassVideoChildren();
+                }
+                IntPtr main = _subclassHwnd;
+                if (msg == WM_NCHITTEST && main != IntPtr.Zero && !FullscreenMax && !IsZoomed(main))
+                {
+                    int ht = HitTestBorder(main, lParam);
+                    if (_diagChildHit < 20) { _diagChildHit++; Diag("CHILD HT hwnd=" + hWnd + " class=" + WinClass(hWnd) + " ht=" + ht); }
+                    bool isVlc;
+                    lock (_childLock) { isVlc = _vlcWindows.Contains(hWnd); }
+                    if (isVlc && _diagVlcHit < 100)
+                    {
+                        _diagVlcHit++;
+                        long v = lParam.ToInt64();
+                        int px = (short)(v & 0xFFFF);
+                        int py = (short)((v >> 16) & 0xFFFF);
+                        RECTL mrc = new RECTL();
+                        GetWindowRect(main, out mrc);
+                        Diag("VLC HT hwnd=" + hWnd + " pt=" + px + "," + py + " main=" + mrc.left + "," + mrc.top + "," + mrc.right + "," + mrc.bottom + " grip=" + GripPx(main) + " ht=" + ht + " fs=" + FullscreenMax + " zoom=" + IsZoomed(main));
+                    }
+                    if (ht != 0) return (IntPtr)ht;
+                }
+            }
+            catch { }
+            IntPtr prev = IntPtr.Zero;
+            lock (_childLock) { _childOldProcs.TryGetValue(hWnd, out prev); }
+            if (prev != IntPtr.Zero)
+                return ForwardProc(prev, hWnd, msg, wParam, lParam);
+            return DefWindowProc(hWnd, msg, wParam, lParam);
+        }
 
         // Rectángulo COMPLETO del monitor donde está la ventana (píxeles físicos).
         // Para el fullscreen del reproductor: no depende del hook de maximizar.

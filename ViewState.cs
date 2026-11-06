@@ -43,6 +43,21 @@ namespace MiTV
             Save();
         }
 
+        // Anchos de columna persistidos (p. ej. lista de canales, columna EPG)
+        public static double GetDouble(string key, double fallback)
+        {
+            if (last.TryGetValue(key, out var v) && double.TryParse(v, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var d) && d > 0) return d;
+            return fallback;
+        }
+
+        public static void SetDouble(string key, double value)
+        {
+            string v = value.ToString("F0", System.Globalization.CultureInfo.InvariantCulture);
+            if (last.TryGetValue(key, out var cur) && cur == v) return;
+            last[key] = v;
+            Save();
+        }
+
         // Pestaña inicial de la app (0=Inicio … 5=Guía). Se lee al arrancar.
         public static int StartTab
         {

@@ -91,10 +91,10 @@ namespace MiTV
             catch { vlcOk = false; }
         }
 
-        DispatcherTimer tick, hideTimer, loadTimer, infoTimer, clockTimer;
+        DispatcherTimer tick, hideTimer, loadTimer, infoTimer, clockTimer, volClockTimer;
         Border infoPanel, infoProgFill;
         TextBlock infoRemain;
-        ClockFace clockFace;
+        ClockFace clockFace, volClockFace;
         EpgProgramme infoProg;
         DispatcherTimer clockHoverTimer;
         bool clockDragging, clockShowingDate;
@@ -423,9 +423,14 @@ namespace MiTV
             // Reloj permanente (segundo cuadrante, debajo del EN VIVO): se puede arrastrar
             clockFace = new ClockFace();
             clockFace.SetTime(DateTime.Now.ToString("HH:mm"));
+            volClockFace = new ClockFace { FontSizePx = 30, HorizontalAlignment = HorizontalAlignment.Right };
+            volClockFace.SetTime("");
+            var clockStack = new StackPanel();
+            clockStack.Children.Add(clockFace);
+            clockStack.Children.Add(volClockFace);
             var clockHost = new ContentControl
             {
-                Content = clockFace,
+                Content = clockStack,
                 VerticalAlignment = VerticalAlignment.Top,
                 Visibility = PlaybackSettings.ShowClock ? Visibility.Visible : Visibility.Collapsed,
                 Cursor = Cursors.SizeAll
@@ -444,6 +449,8 @@ namespace MiTV
             clockTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(30) };
             clockTimer.Tick += (s, e) => { if (!clockShowingDate) clockFace.SetTime(DateTime.Now.ToString("HH:mm")); };
             clockTimer.Start();
+            volClockTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(10) };
+            volClockTimer.Tick += (s, e) => { volClockTimer.Stop(); volClockFace?.SetTime(""); };
             // Fecha completa al pasar 2 s sobre el reloj
             clockHoverTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(2) };
             clockHoverTimer.Tick += (s, e) =>
@@ -958,9 +965,18 @@ namespace MiTV
             Nav.Toast(muted ? Lang.T("Silenciado") : Lang.T("Sonido activado"));
         }
 
+        void ShowVolClock()
+        {
+            if (volClockFace == null) return;
+            volClockFace.SetTime("Volumen " + ((int)vol) + "%");
+            volClockTimer?.Stop();
+            volClockTimer?.Start();
+        }
+
         void ApplyVolume()
         {
             volFill.Width = 90 * vol / 100;
+            ShowVolClock();
             muted = vol <= 1;
             if (mp != null) { mp.Volume = (int)vol; mp.Mute = muted; }
             muteBtn.Content = muted ? "🔇" : "🔊";
@@ -1442,7 +1458,7 @@ namespace MiTV
                 Ui.Confirm(Lang.T("Grabación en curso"), Lang.T("Si sales se cancelará la grabación. ¿Continuar?"), Lang.T("Salir"), () => { Recording.StopManual(); SendToVlc(); });
                 return;
             }
-            if (!ExternalVlc.Play(streamUrl)) { Nav.Toast(Lang.T("VLC no encontrado")); return; }
+            if (!ExternalVlc.Play(streamUrl, chName)) { Nav.Toast(Lang.T("VLC no encontrado")); return; }
             noBackground = true;
             try { if (mp != null) mp.Stop(); } catch { }
             StopTimeshift();

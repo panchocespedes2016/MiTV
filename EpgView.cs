@@ -293,7 +293,7 @@ namespace MiTV
         void SendPreviewToVlc()
         {
             if (playingCh == null || string.IsNullOrEmpty(playingCh.StreamUrl)) return;
-            if (!ExternalVlc.Play(playingCh.StreamUrl)) { Nav.Toast(Lang.T("VLC no encontrado")); return; }
+            if (!ExternalVlc.Play(playingCh.StreamUrl, playingCh.Name)) { Nav.Toast(Lang.T("VLC no encontrado")); return; }
             StopPreview();
         }
 
@@ -363,12 +363,20 @@ namespace MiTV
             var body = new Grid();
             body.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
             body.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
-            body.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(ChColW) });
+            // Ancho de la columna de canales persistido (la franja lo cambia en vivo)
+            double savedChW = ViewState.GetDouble("epgChW", ChColW);
+            var chCol = new ColumnDefinition { Width = new GridLength(Math.Max(140, Math.Min(380, savedChW))) };
+            body.ColumnDefinitions.Add(chCol);
+            body.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(6) });
             body.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            var chResizer = Ui.ColumnResizer(body, chCol, 140, 380, 300, w => ViewState.SetDouble("epgChW", w));
+            Grid.SetRowSpan(chResizer, 2);
+            Grid.SetColumn(chResizer, 1);
+            body.Children.Add(chResizer);
 
             body.Children.Add(new Border { Background = Ui.TopBg }); // esquina vacía
 
-            Grid.SetColumn(headerScroll, 1);
+            Grid.SetColumn(headerScroll, 2);
             body.Children.Add(headerScroll);
 
             chanScroll = new ScrollViewer
@@ -412,7 +420,7 @@ namespace MiTV
                 }
             };
             Grid.SetRow(rowsScroll, 1);
-            Grid.SetColumn(rowsScroll, 1);
+            Grid.SetColumn(rowsScroll, 2);
             body.Children.Add(rowsScroll);
 
             Grid.SetRow(body, 1);

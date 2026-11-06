@@ -734,6 +734,57 @@ namespace MiTV
             return g;
         }
 
+        // Franja de arrastre para cambiar en vivo el ancho de una columna:
+        // la columna vecina (estrella) absorbe el resto. minW = ancho mínimo
+        // de la columna; maxW = tope; minNeighbor = ancho mínimo que se le
+        // deja al resto. Al soltar, onRelease recibe el ancho final (para
+        // persistirlo). La franja va en su propia columna de 6 px, junto a
+        // la columna que se redimensiona.
+        public static Border ColumnResizer(Grid grid, ColumnDefinition col, double minW, double maxW, double minNeighbor, Action<double> onRelease)
+        {
+            var handle = new Border
+            {
+                Width = 6,
+                Background = Brushes.Transparent,
+                Cursor = Cursors.SizeWE,
+                VerticalAlignment = VerticalAlignment.Stretch,
+                HorizontalAlignment = HorizontalAlignment.Stretch
+            };
+            bool dragging = false;
+            double startX = 0, startW = 0, lastW = 0;
+            void EndDrag(bool save)
+            {
+                if (!dragging) return;
+                dragging = false;
+                try { Mouse.Capture(null); } catch { }
+                handle.Background = Brushes.Transparent;
+                if (save) onRelease?.Invoke(lastW);
+            }
+            handle.MouseEnter += (s, e) => { if (!dragging) handle.Background = Brd; };
+            handle.MouseLeave += (s, e) => { if (!dragging) handle.Background = Brushes.Transparent; };
+            handle.MouseLeftButtonDown += (s, e) =>
+            {
+                dragging = true;
+                startX = e.GetPosition(grid).X;
+                startW = col.ActualWidth;
+                lastW = startW;
+                handle.Background = Brd;
+                if (!Mouse.Capture(handle)) dragging = false;
+                e.Handled = true;
+            };
+            handle.MouseMove += (s, e) =>
+            {
+                if (!dragging) return;
+                double max = Math.Min(maxW, grid.ActualWidth - 6 - minNeighbor);
+                double w = Math.Max(minW, Math.Min(max, startW + (e.GetPosition(grid).X - startX)));
+                lastW = w;
+                col.Width = new GridLength(w, GridUnitType.Pixel);
+            };
+            handle.MouseLeftButtonUp += (s, e) => EndDrag(true);
+            handle.LostMouseCapture += (s, e) => EndDrag(true);
+            return handle;
+        }
+
         // Fila de ajuste (navega a submenú o muestra valor)
         public static Border SettingRow(string title, string sub, string value, Action onClick)
         {

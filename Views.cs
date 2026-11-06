@@ -326,11 +326,19 @@ namespace MiTV
         public LiveTvView()
         {
             var grid = Ui.TwoColumns(240);
+            // Ancho de la lista persistido (la franja de arrastre lo cambia en vivo)
+            var listCol = grid.ColumnDefinitions[1];
+            double savedListW = ViewState.GetDouble("liveListW", 0);
+            if (savedListW >= 320) listCol.Width = new GridLength(savedListW, GridUnitType.Pixel);
+            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(6) });
             // La columna del preview es proporcional (0.55*): con 480 fijos la
             // lista quedaba sin ancho en ventanas no maximizadas y los nombres
             // solo se veían por la rendija de la marquesina.
             grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(0.55, GridUnitType.Star) });
             catsPanel = Ui.CategorySidebar(grid, 0, out _);
+            var listResizer = Ui.ColumnResizer(grid, listCol, 320, 1200, 280, w => ViewState.SetDouble("liveListW", w));
+            Grid.SetColumn(listResizer, 2);
+            grid.Children.Add(listResizer);
 
             // El título queda FUERA del scroll: fijo arriba, solo se mueve la lista
             var right = new Grid();
@@ -349,7 +357,7 @@ namespace MiTV
             grid.Children.Add(right);
 
             var previewPanel = BuildPreviewPanel();
-            Grid.SetColumn(previewPanel, 2);
+            Grid.SetColumn(previewPanel, 3);
             grid.Children.Add(previewPanel);
 
             detailTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(60) };
@@ -803,14 +811,22 @@ namespace MiTV
         public SportsView()
         {
             var grid = Ui.TwoColumns(240);
+            // Ancho de la barra de categorías persistido (la franja lo cambia en vivo)
+            var sideCol = grid.ColumnDefinitions[0];
+            double savedSideW = ViewState.GetDouble("sportsSideW", 0);
+            if (savedSideW >= 180 && savedSideW <= 360) sideCol.Width = new GridLength(savedSideW, GridUnitType.Pixel);
+            grid.ColumnDefinitions.Insert(1, new ColumnDefinition { Width = new GridLength(6) });
             catsPanel = Ui.CategorySidebar(grid, 0, out _);
+            var sideResizer = Ui.ColumnResizer(grid, sideCol, 180, 360, 300, w => ViewState.SetDouble("sportsSideW", w));
+            Grid.SetColumn(sideResizer, 1);
+            grid.Children.Add(sideResizer);
 
             var right = new StackPanel { Margin = new Thickness(20, 14, 26, 18) };
             right.Children.Add(Ui.SectionTitle(Lang.T("Deportes en vivo")));
             list = new StackPanel();
             right.Children.Add(list);
             var listScroll = new ScrollViewer { Content = right, VerticalScrollBarVisibility = ScrollBarVisibility.Auto };
-            Grid.SetColumn(listScroll, 1);
+            Grid.SetColumn(listScroll, 2);
             grid.Children.Add(listScroll);
 
             // Franja de búsqueda integrada encima de todo el ancho
@@ -1800,10 +1816,16 @@ namespace MiTV
             var snVlc = new Button { Content = "VLC", FontSize = 13, FontWeight = FontWeights.SemiBold, Style = Ui.RoundedButtonStyle(Ui.Panel2), Padding = new Thickness(16, 8, 16, 8), Cursor = System.Windows.Input.Cursors.Hand, VerticalAlignment = VerticalAlignment.Center, Foreground = Brushes.White, ToolTip = Lang.T("Temporada en VLC") };
             snVlc.Click += (s, e) =>
             {
-                var urls = eps.Where(x => x.Season == sel).OrderBy(x => x.Num).Select(x => x.Url);
-                if (!ExternalVlc.PlayMultiple(urls)) Nav.Toast(Lang.T("VLC no encontrado"));
+                var items = eps.Where(x => x.Season == sel).OrderBy(x => x.Num).Select(x => (x.Url, EpisodeVlcName(x)));
+                if (!ExternalVlc.PlayMultiple(items)) Nav.Toast(Lang.T("VLC no encontrado"));
             };
             chips.Children.Add(snVlc);
+        }
+
+        string EpisodeVlcName(PlaylistLoader.EpisodeInfo ep)
+        {
+            string t = string.IsNullOrEmpty(ep.Title) ? Lang.T("Episodio ") + ep.Num : ep.Title;
+            return serie.Name + " - S" + Ui.Pad2(ep.Season) + " E" + Ui.Pad2(ep.Num) + " - " + t;
         }
 
         void RenderList(string season)
@@ -1885,7 +1907,7 @@ namespace MiTV
                 dock.Children.Add(dlBtn);
                 var epVlc = new Button { Content = "VLC", FontSize = 14, FontWeight = FontWeights.SemiBold, Style = Ui.RoundedButtonStyle(Ui.Panel2), Padding = new Thickness(14, 10, 14, 10), Margin = new Thickness(10, 0, 0, 0), Cursor = System.Windows.Input.Cursors.Hand, VerticalAlignment = VerticalAlignment.Center, Foreground = Brushes.White, ToolTip = Lang.T("Abrir en VLC") };
                 var epUrl = ep.Url;
-                epVlc.Click += (s2, e2) => { e2.Handled = true; if (!ExternalVlc.Play(epUrl)) Nav.Toast(Lang.T("VLC no encontrado")); };
+                epVlc.Click += (s2, e2) => { e2.Handled = true; if (!ExternalVlc.Play(epUrl, EpisodeVlcName(ep))) Nav.Toast(Lang.T("VLC no encontrado")); };
                 DockPanel.SetDock(epVlc, Dock.Right);
                 dock.Children.Add(epVlc);
                 b.Child = dock;
@@ -2151,7 +2173,7 @@ namespace MiTV
             btnPlay.Click += (s, e) => PlayerView.Open(m.Name, m.Category, false, m.StreamUrl, m.Logo, hasProgress ? posMs : 0);
             btnRow.Children.Add(btnPlay);
             var btnVlc = new Button { Content = "VLC", Style = Ui.RoundedButtonStyle(Ui.Panel2), Margin = new Thickness(10, 0, 0, 0), Padding = new Thickness(24, 14, 24, 14), FontSize = 15, FontWeight = FontWeights.SemiBold, Foreground = Brushes.White, Cursor = System.Windows.Input.Cursors.Hand, ToolTip = Lang.T("Abrir en VLC") };
-            btnVlc.Click += (s, e) => { if (!ExternalVlc.Play(m.StreamUrl)) Nav.Toast(Lang.T("VLC no encontrado")); };
+            btnVlc.Click += (s, e) => { if (!ExternalVlc.Play(m.StreamUrl, m.Name)) Nav.Toast(Lang.T("VLC no encontrado")); };
             btnRow.Children.Add(btnVlc);
             info.Children.Add(btnRow);
             var btnDl = new Button { Content = "\u2B07 " + Lang.T("Descargar"), Style = Ui.RoundedButtonStyle(Ui.Panel2), Margin = new Thickness(0, 10, 0, 0), Padding = new Thickness(24, 10, 24, 10), Cursor = System.Windows.Input.Cursors.Hand, HorizontalAlignment = HorizontalAlignment.Left };
@@ -2251,6 +2273,7 @@ namespace MiTV
                 catch { }
                 string path = System.IO.Path.Combine(folder, safe + ext);
                 using var http = new System.Net.Http.HttpClient { Timeout = TimeSpan.FromHours(4) };
+                http.DefaultRequestHeaders.UserAgent.ParseAdd("MiTV/1.0.6");
                 using var resp = await http.GetAsync(url, System.Net.Http.HttpCompletionOption.ResponseHeadersRead);
                 resp.EnsureSuccessStatusCode();
                 using var fs = new System.IO.FileStream(path, System.IO.FileMode.Create, System.IO.FileAccess.Write, System.IO.FileShare.None);
@@ -2293,6 +2316,7 @@ namespace MiTV
                 catch { }
                 string path = System.IO.Path.Combine(folder, safe + ext);
                 using var http = new System.Net.Http.HttpClient { Timeout = TimeSpan.FromHours(4) };
+                http.DefaultRequestHeaders.UserAgent.ParseAdd("MiTV/1.0.6");
                 using var resp = await http.GetAsync(m.StreamUrl, System.Net.Http.HttpCompletionOption.ResponseHeadersRead);
                 resp.EnsureSuccessStatusCode();
                 long total = resp.Content.Headers.ContentLength ?? -1;
